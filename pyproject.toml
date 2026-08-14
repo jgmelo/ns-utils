@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tif-analyzer"
+version = "1.0.0"
+description = "Terminal-interactive analyzer for TIF image series: metric vs. filename parameter"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "tifffile",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+keys = ["readchar"]
+dev = ["pytest", "readchar"]
+
+[project.scripts]
+tif-analyzer = "tif_analyzer.app:main"
+
+[tool.setuptools.packages.find]
+include = ["tif_analyzer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
