@@ -14,12 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, Iterable, Sequence
 
-from . import loading, metrics, preprocess
+from . import loading, metrics, preprocess, regions as regions_mod
 from .cache import ResultCache, make_key
 from .discovery import FileRecord
 from .loading import PagePolicy
-from .metrics import MetricContractError, MetricSpec
+from .metrics import MetricContractError, MetricSpec, MissingRegionsError
 from .preprocess import PreprocessStep
+from .regions import RegionSet
 
 
 @dataclass
@@ -77,10 +78,11 @@ def make_snapshot(
     page_policy: str,
     allow_duplicates: bool,
     n_files: int,
+    regions: RegionSet | None = None,
 ) -> dict:
     """The provenance record carried by :class:`RunReport`, the plot title and
     the CSV header."""
-    return {
+    snapshot = {
         "directory": str(directory),
         "glob": glob,
         "pattern": pattern,
@@ -92,6 +94,11 @@ def make_snapshot(
         "n_files": n_files,
         "timestamp": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
     }
+    if regions is not None:
+        snapshot["regions"] = regions.describe()
+        snapshot["regions_source"] = regions.source_file or "?"
+        snapshot["regions_hash"] = regions_mod.regions_hash(regions)
+    return snapshot
 
 
 def run(
@@ -102,6 +109,7 @@ def run(
     cache: ResultCache | None = None,
     page_policy: PagePolicy = loading.DEFAULT_PAGE_POLICY,
     snapshot: dict | None = None,
+    regions: RegionSet | None = None,
 ) -> Generator[ProgressEvent, None, RunReport]:
     """Process *records*, yielding one :class:`ProgressEvent` per file.
 
@@ -114,11 +122,21 @@ def run(
             except StopIteration as stop:
                 report = stop.value
                 break
+
+    A region-aware metric needs *regions*; that precondition is checked once,
+    before any file is opened, rather than failing identically on every file.
     """
+    if metric.needs_regions and regions is None:
+        raise MissingRegionsError(
+            f"metric {metric.key!r} needs the {', '.join(metric.requires_regions)} area(s); "
+            "select them before running"
+        )
+
     records = list(records)
     total = len(records)
     report = RunReport(config_snapshot=dict(snapshot or {}))
     phash = preprocess.preprocess_hash(steps)
+    rhash = regions_mod.regions_hash(regions) if metric.needs_regions else ""
 
     for index, record in enumerate(records, start=1):
         started = time.perf_counter()
@@ -127,14 +145,15 @@ def run(
             values: dict[str, float] | None = None
             key = None
             if cache is not None:
-                key = make_key(record.path, metric.key, phash)
+                key = make_key(record.path, metric.key, phash, rhash)
                 values = cache.get(key)
                 from_cache = values is not None
 
             if values is None:
                 image = loading.load_image(record.path, page_policy)
                 image = preprocess.apply_pipeline(image, steps)
-                values = metrics.compute_validated(metric, image)
+                samples = regions.extract(image) if metric.needs_regions and regions else None
+                values = metrics.compute_validated(metric, image, samples)
                 if cache is not None and key is not None:
                     cache.put(key, values)
 

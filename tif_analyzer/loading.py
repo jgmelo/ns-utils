@@ -67,6 +67,26 @@ def page_count(path: Path) -> int:
         return len(tif.pages)
 
 
+def image_shape(path: Path) -> tuple[int, int]:
+    """``(height, width)`` of the first page, read from the header only.
+
+    Cheap enough to call when entering a directory, which is what checking the
+    saved areas against the data needs.
+    """
+    try:
+        with tifffile.TiffFile(path) as tif:
+            if not tif.pages:
+                raise UnsupportedImageError(f"{Path(path).name}: file contains no image pages")
+            shape = tuple(int(v) for v in tif.pages[0].shape[:2])
+    except LoadError:
+        raise
+    except (OSError, ValueError, tifffile.TiffFileError) as exc:
+        raise LoadError(f"{Path(path).name}: could not read TIFF header ({exc})") from exc
+    if len(shape) != 2:
+        raise UnsupportedImageError(f"{Path(path).name}: unexpected page shape {shape}")
+    return shape[0], shape[1]
+
+
 def load_image(path: Path, policy: PagePolicy = DEFAULT_PAGE_POLICY) -> np.ndarray:
     """Open *path* and return a single 2-D float64 image.
 

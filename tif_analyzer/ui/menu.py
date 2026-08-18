@@ -18,11 +18,21 @@ from __future__ import annotations
 
 import time
 
-from .. import analysis, config as config_mod, discovery, export, metrics, plotting
+from .. import (
+    analysis,
+    config as config_mod,
+    discovery,
+    export,
+    loading,
+    metrics,
+    plotting,
+    roi_sidecar,
+)
 from ..cache import ResultCache
 from ..discovery import DiscoveryError, DuplicateParameterError
+from ..regions import RegionError
 from ..state import AppState
-from . import prompts, render
+from . import prompts, render, selection
 from .keys import KeyReader
 
 
@@ -95,6 +105,15 @@ class MenuApp:
             blocked["r"] = str(self.discovery_error)
         elif not self.state.has_records:
             blocked["r"] = "no matching files"
+        elif not self.state.regions_ready:
+            blocked["r"] = f"metric {self.state.metric_key} needs the areas — press [a]"
+
+        can_select, reason = selection.can_select()
+        if not can_select:
+            blocked["a"] = reason
+        elif not self.state.has_records:
+            blocked["a"] = "no matching files to open"
+
         if not self.state.has_results:
             blocked["v"] = "no results — run the analysis first"
             blocked["e"] = "no results — run the analysis first"
@@ -136,9 +155,69 @@ class MenuApp:
         chosen = prompts.prompt_directory(self.state.directory)
         if chosen is None:
             return
-        self.state.update(directory=chosen)
+        self.state.update(directory=chosen, regions=None)
         self.discovery_error = None
         self._persist()
+        self.ensure_discovery()
+        self.load_saved_regions()
+
+    # -- areas -------------------------------------------------------------- #
+
+    def load_saved_regions(self) -> None:
+        """Pick up the sidecar of the current directory, if it fits the data.
+
+        Areas are pixel coordinates: they only mean something for the images
+        they were drawn on, so they follow the directory rather than the user.
+        """
+        shape = None
+        if self.state.records:
+            try:
+                shape = loading.image_shape(self.state.records[0].path)
+            except loading.LoadError:
+                shape = None
+        loaded = roi_sidecar.load(self.state.directory, shape)
+        if loaded.notice:
+            self.notices.append(loaded.notice)
+        if loaded.regions is not None:
+            self.state.update(regions=loaded.regions)
+            self.messages.append(
+                f"  ✓ areas loaded from {roi_sidecar.SIDECAR_NAME}: {loaded.regions.describe()}"
+            )
+
+    def action_areas(self) -> None:
+        can_select, reason = selection.can_select()
+        if not can_select:
+            self.messages.append(f"  ✗ {reason}")
+            return
+        if not self.state.records:
+            return
+
+        record = prompts.prompt_reference_file(self.state.records)
+        if record is None:
+            return
+        try:
+            image = loading.load_image(record.path, self.state.page_policy)
+        except loading.LoadError as exc:
+            self.messages.append(f"  ✗ {exc}")
+            return
+
+        print(f"\n  opening {record.path.name} — draw the signal area, then the noise area…")
+        try:
+            regions = selection.select_regions(image, record.path.name)
+        except RegionError as exc:
+            self.messages.append(f"  ✗ {exc}")
+            return
+        if regions is None:
+            self.messages.append("  areas unchanged")
+            return
+
+        self.state.update(regions=regions)
+        path, notice = roi_sidecar.save(self.state.directory, regions)
+        if notice:
+            self.notices.append(notice)
+        self.messages.append(f"  ✓ areas set: {regions.describe()}")
+        if path is not None:
+            self.messages.append(f"    saved to {path.name}")
 
     def action_pattern(self) -> None:
         chosen = prompts.prompt_pattern(self.state.pattern)
@@ -190,6 +269,8 @@ class MenuApp:
         self.ensure_discovery()
         if self.discovery_error is not None or not self.state.has_records:
             return
+        if not self.state.regions_ready:
+            return
         assert self.state.discovery is not None
 
         render.clear_screen(self.clear)
@@ -206,6 +287,7 @@ class MenuApp:
             page_policy=self.state.page_policy,
             allow_duplicates=self.state.allow_duplicates,
             n_files=len(self.state.records or []),
+            regions=self.state.regions if spec.needs_regions else None,
         )
         generator = analysis.run(
             self.state.records or [],
@@ -214,6 +296,7 @@ class MenuApp:
             cache=self.cache,
             page_policy=self.state.page_policy,
             snapshot=snapshot,
+            regions=self.state.regions,
         )
         started = time.perf_counter()
         report: analysis.RunReport
@@ -281,6 +364,7 @@ class MenuApp:
         if key == "q":
             return False
         actions = {
+            "a": self.action_areas,
             "d": self.action_directory,
             "p": self.action_pattern,
             "g": self.action_glob,
@@ -298,6 +382,9 @@ class MenuApp:
 
     def loop(self) -> int:
         self.running = True
+        self.ensure_discovery()
+        if self.state.regions is None:
+            self.load_saved_regions()
         try:
             while self.running:
                 self.ensure_discovery()

@@ -9,9 +9,12 @@ Specification), Python 3.10+.
 
 ```
 medida_001_1mW.tif ─┐
-medida_002_2mW.tif ─┼─► desvio-padrão por imagem ─► gráfico std × potência (mW)
+medida_002_2mW.tif ─┼─► métrica por imagem ─► gráfico métrica × potência (mW)
 medida_017_12.5mW.tiff ─┘
 ```
+
+Duas métricas na v1: desvio-padrão da imagem inteira (`std`) e razão sinal-ruído
+a partir de duas áreas selecionadas na tela (`snr`).
 
 ## Instalação
 
@@ -47,6 +50,7 @@ Tela principal:
   [m] metric           [g] glob filter
   [r] run analysis     [v] view plot
   [e] export CSV       [!] allow duplicates: OFF
+  [a] select areas     [s] select series
   [q] quit
 ```
 
@@ -60,6 +64,7 @@ Flags úteis:
 | Flag | Efeito |
 |------|--------|
 | `--pattern`, `--glob`, `--metric` | sobrescrevem o que estiver salvo na config |
+| `--metric snr` | usa a métrica de áreas (exige seleção prévia com `[a]`) |
 | `--page-policy {error,first,mean}` | política para TIFF multi-página (padrão `error`) |
 | `--allow-duplicates` | não trata valores repetidos como erro |
 | `--no-config` | ignora e não grava a configuração persistida |
@@ -81,11 +86,56 @@ O prompt de padrão traz uma tabela de exemplos para editar, e valida na hora:
 não compila → erro; zero grupos nomeados → "não há parâmetro para plotar";
 dois ou mais → "ambíguo, qual é o eixo x?".
 
+### Seleção de áreas (sinal e ruído)
+
+A métrica `snr` mede duas regiões da mesma imagem. Você seleciona as duas **uma
+vez**, numa imagem de referência que sabe conter o sinal, e o cálculo roda sobre
+todos os arquivos válidos:
+
+```
+[a] ─► escolhe a imagem de referência ─► janela abre
+       │  arrasta a área de SINAL  → [enter]
+       │  arrasta a área de RUÍDO  → [enter]
+       ▼
+   .tif-analyzer-rois.json gravado no diretório dos dados
+```
+
+Teclas dentro da janela:
+
+| Tecla | Efeito |
+|-------|--------|
+| arrastar | desenha a área da etapa atual |
+| `r` / `e` | retângulo ou elipse |
+| `enter` | confirma a área e passa para a próxima |
+| `u` | desfaz (a caixa pendente, depois a confirmada) |
+| `l` | alterna o realce de exibição (gamma ↔ linear) |
+| `esc` | cancela tudo, nada é alterado |
+
+A imagem aparece com clipe de percentil 1–99% e realce gamma, senão um quadro de
+16 bits com um feixe compacto vira preto puro e não dá para julgar onde está o
+fundo. **É curva de exibição apenas** — a métrica sempre vê contagens brutas.
+
+As áreas ficam num sidecar `.tif-analyzer-rois.json` ao lado das imagens, não na
+config global: são coordenadas em pixels, só fazem sentido para aquele conjunto.
+Ao entrar num diretório elas são carregadas e conferidas contra a dimensão real
+das imagens; se não baterem, um aviso explica e elas **não** são aplicadas.
+
+Imagem com dimensão diferente da referência vira falha daquele arquivo, coletada
+como qualquer outra — a corrida não aborta.
+
+Seleção exige interface gráfica. Sem ela, `[a]` fica desabilitada com o motivo;
+áreas já gravadas no sidecar continuam funcionando, então dá para rodar e
+exportar por SSH, só não selecionar.
+
 ### Dados de exemplo
 
 ```bash
 python scripts/make_sample_series.py /tmp/sample --with-unmatched --with-stack
 tif-analyzer /tmp/sample
+
+# com um feixe gaussiano, para exercitar a métrica de áreas
+python scripts/make_sample_series.py /tmp/beam --beam --size 160
+tif-analyzer /tmp/beam --metric snr
 ```
 
 ## Uso como biblioteca
@@ -113,6 +163,8 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | Módulo | Responsabilidade |
 |--------|------------------|
 | `discovery.py` | glob + regex + `FileRecord`s + duplicatas. Nenhum I/O de imagem. |
+| `regions.py` | `Rect`/`Ellipse`/`RegionSet`, máscara, extração de pixels, hash das áreas. |
+| `roi_sidecar.py` | leitura/escrita de `.tif-analyzer-rois.json` no diretório dos dados. |
 | `loading.py` | abre TIFFs via `tifffile`, aplica a política multi-página, devolve `float64`. |
 | `preprocess.py` | pipeline ordenado + serialização canônica + hash. Vazio na v1. |
 | `metrics.py` | registro de métricas via `@register`. Nada fora daqui lista métricas. |
@@ -122,6 +174,7 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `export.py` | CSV formato longo com o snapshot em linhas `#`. |
 | `config.py` | configuração persistida (último diretório, padrão, métrica, glob, duplicatas). |
 | `state.py` | `AppState` + regra de invalidação. |
+| `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
 
@@ -133,14 +186,15 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | 2 | Métricas devolvem `dict[str, float]`, nunca float puro | `metrics.compute_validated` |
 | 3 | Preprocessing é lista ordenada de passos, vazia na v1 | `preprocess.apply_pipeline` |
 | 4 | Duplicatas são erro duro, na descoberta, antes de qualquer I/O | `discovery.discover` |
-| 5 | Resultados em cache por `(path, mtime_ns, size, metric_key, preprocess_hash)` | `cache.make_key` |
+| 5 | Resultados em cache por `(path, mtime_ns, size, metric_key, preprocess_hash, regions_hash)` | `cache.make_key` |
 | 6 | Plot interativo, com fallback para PNG em backend não-GUI | `plotting.show_or_save` |
 | 7 | Último diretório persistido e oferecido como padrão | `config.resolve_startup` |
 
 ### Regra de invalidação
 
 Alterar `directory`, `glob`, `pattern`, `metric_key`, `preprocess_steps`,
-`allow_duplicates` ou `page_policy` limpa `records`, `discovery` e `report`.
+`allow_duplicates`, `page_policy` ou `regions` limpa `records`, `discovery` e
+`report` — redesenhar uma área invalida os números anteriores.
 Alterar `selected_series` **não** limpa nada — só afeta a renderização. Toda
 mutação passa por `AppState.update`, uma função só, porque bug de gráfico
 desatualizado nasce exatamente de atribuições espalhadas.
@@ -166,26 +220,38 @@ filename,param_name,param_value,output_key,value
 medida_001_1mW.tif,power,1,std,12.4471
 ```
 
-## Adicionando uma métrica
+## Métricas
+
+| key | saídas | precisa de áreas |
+|-----|--------|------------------|
+| `std` | `std` (desvio amostral, ddof=1, imagem inteira) | não |
+| `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std` | sim (`signal`, `noise`) |
+
+`snr = (signal_mean − noise_mean) / noise_std`, tudo do mesmo arquivo, em
+contagens brutas; a razão é adimensional. Área de ruído com variância zero vira
+falha daquele arquivo, não `inf`.
+
+### Adicionando uma métrica
 
 Só `metrics.py` é tocado:
 
 ```python
 @register(
-    key="mean_std",
-    name="Mean and standard deviation",
-    description="Média e desvio-padrão amostral (ddof=1), em contagens brutas.",
-    outputs=(
-        OutputSpec("mean", "Mean", "counts"),
-        OutputSpec("std", "Standard deviation", "counts"),
-    ),
+    key="contrast",
+    name="Contrast",
+    description="Sinal menos fundo, em contagens brutas.",
+    outputs=(OutputSpec("contrast", "Contrast", "counts"),),
+    requires_regions=("signal", "noise"),      # opcional; omita para métrica global
 )
-def _mean_std(image):
-    return {"mean": float(image.mean()), "std": float(image.std(ddof=1))}
+def _contrast(image, regions):                  # sem regiões, a assinatura é (image)
+    return {"contrast": float(regions["signal"].mean() - regions["noise"].mean())}
 ```
 
-Como `outputs` é declarado estaticamente, a UI já lista as séries e oferece
-`[s] select series` sem precisar rodar nada antes.
+`outputs` e `requires_regions` são declarados estaticamente, então a UI lista as
+séries em `[s]` e sabe dizer "selecione as áreas primeiro" sem rodar nada antes.
+As regiões chegam como amostras 1-D já extraídas — média e desvio não se importam
+com forma, e elipse não tem sub-imagem retangular. Uma métrica que precise da
+geometria 2-D da região precisaria de mais que isso.
 
 ## Testes
 
@@ -193,12 +259,15 @@ Como `outputs` é declarado estaticamente, a UI já lista as séries e oferece
 python -m pytest
 ```
 
-105 testes cobrindo parsing de nomes, duplicatas, política multi-página,
-contrato das métricas, chave de cache, invalidação de estado, config corrompida,
-CSV, fallback headless do gráfico e o loop de menu com teclas roteirizadas.
+182 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
+cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
+config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas
+roteirizadas.
 
 ## Fora de escopo na v1
 
 Passos de preprocessing com comportamento real (o pipeline existe, vazio), cache
 persistente em disco, extração de dois parâmetros / séries agrupadas, varredura
-recursiva de diretórios e formatos não-TIFF.
+recursiva de diretórios, formatos não-TIFF, mais de duas áreas, áreas diferentes
+por arquivo, polígono livre e subtração de dark-frame.

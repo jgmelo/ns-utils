@@ -165,10 +165,50 @@ def choose_from_menu(
 
 
 def metric_entries() -> list[tuple[str, str]]:
-    return [
-        (spec.key, f"{spec.key} — {spec.name}: {spec.description}")
-        for spec in metrics.available()
-    ]
+    entries = []
+    for spec in metrics.available():
+        needs = (
+            f"  [needs the {', '.join(spec.requires_regions)} areas]"
+            if spec.needs_regions
+            else ""
+        )
+        entries.append((spec.key, f"{spec.key} — {spec.name}{needs}: {spec.description}"))
+    return entries
+
+
+def prompt_reference_file(records: Sequence, limit: int = 20):
+    """Pick the image the areas are drawn on. ``None`` means cancelled.
+
+    The default is the first matched file; a number picks from the list and any
+    other text is matched against filenames, so a long series does not force
+    scrolling through 44 numbered lines.
+    """
+    if not records:
+        return None
+    print(f"\n  Reference image for the areas   ({CANCEL_HINT})")
+    for index, record in enumerate(records[:limit], start=1):
+        print(f"    [{index:>2}] {record.path.name}   ({record.param_name}={record.param_value:g})")
+    if len(records) > limit:
+        print(f"    … and {len(records) - limit} more — type part of a filename to pick one")
+
+    while True:
+        # Default "1" so a bare Enter takes the first file; None is a real cancel.
+        raw = prompt_line(f"  file [Enter = {records[0].path.name}]> ", "1")
+        if raw is None:
+            return None
+        if raw.isdigit():
+            index = int(raw) - 1
+            if 0 <= index < len(records):
+                return records[index]
+            print(f"  ! pick a number between 1 and {len(records)}")
+            continue
+        matches = [r for r in records if raw.lower() in r.path.name.lower()]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            print(f"  ! no filename contains {raw!r}")
+        else:
+            print(f"  ! {len(matches)} files match {raw!r} — be more specific")
 
 
 def series_entries(spec: metrics.MetricSpec) -> list[tuple[str, str]]:

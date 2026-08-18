@@ -68,7 +68,7 @@ def test_bare_float_return_raises():
 
 
 def test_unknown_metric_lists_registered_ones():
-    with pytest.raises(KeyError, match="registered: std"):
+    with pytest.raises(KeyError, match="registered: snr, std"):
         metrics.get("nope")
 
 

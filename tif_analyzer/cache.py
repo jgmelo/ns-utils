@@ -1,8 +1,13 @@
 """In-memory result cache (v1).
 
-Keyed on ``(path, mtime_ns, size, metric_key, preprocess_hash)`` so that
-re-running after a plot tweak does not re-read large images, while an edited or
-replaced file is still recomputed.
+Keyed on ``(path, mtime_ns, size, metric_key, preprocess_hash, regions_hash)`` so
+that re-running after a plot tweak does not re-read large images, while an edited
+or replaced file is still recomputed.
+
+``regions_hash`` extends the key the spec locked down: moving a selection area
+changes the numbers, so it has to change the key too — otherwise a re-run after
+nudging the noise box returns stale values, and the plot looks plausible while
+being wrong. It is the empty string for metrics that use no areas.
 
 A persistent on-disk cache (sidecar JSON) is the natural extension; it is
 deliberately out of scope for v1.
@@ -13,14 +18,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-CacheKey = tuple[str, int, int, str, str]
+CacheKey = tuple[str, int, int, str, str, str]
 
 
-def make_key(path: Path, metric_key: str, preprocess_hash: str) -> CacheKey:
+def make_key(
+    path: Path, metric_key: str, preprocess_hash: str, regions_hash: str = ""
+) -> CacheKey:
     """Build the cache key for *path*. Stats the file; raises ``OSError`` if it
     vanished since discovery (handled as an ordinary per-file failure)."""
     stat = Path(path).stat()
-    return (str(Path(path).resolve()), stat.st_mtime_ns, stat.st_size, metric_key, preprocess_hash)
+    return (
+        str(Path(path).resolve()),
+        stat.st_mtime_ns,
+        stat.st_size,
+        metric_key,
+        preprocess_hash,
+        regions_hash,
+    )
 
 
 @dataclass

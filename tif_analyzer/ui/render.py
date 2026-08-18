@@ -58,6 +58,12 @@ def header(state: AppState, backend_note: str, notices: list[str]) -> str:
     lines.append(f"  metric:   {spec.key} — {spec.name}")
     if len(spec.outputs) > 1:
         lines.append(f"  series:   {state.selected_series or spec.default_series}")
+    if state.regions is not None:
+        source = state.regions.source_file
+        origin = f"   [from {source}]" if source else ""
+        lines.append(f"  areas:    {state.regions.describe()}{origin}")
+    elif spec.needs_regions:
+        lines.append("  areas:    none selected — press [a]")
 
     report = state.report
     if report is None:
@@ -95,12 +101,13 @@ def menu(state: AppState, blockers: dict[str, str | None]) -> str:
         entry("v", "view plot"),
         (f"[!] allow duplicates: {'ON' if state.allow_duplicates else 'OFF'}", ""),
     ]
+    left.append(entry("a", "select areas" if state.regions is None else "redraw areas"))
     if len(spec.outputs) > 1:
-        left.append(entry("s", "select series"))
-        right.append(("[q] quit", ""))
-    else:
-        right.append(("", ""))
+        right.append(entry("s", "select series"))
         left.append(("[q] quit", ""))
+        right.append(("", ""))
+    else:
+        right.append(("[q] quit", ""))
 
     # The column width comes from the labels alone, so a long reason never
     # shifts the second column around between redraws.

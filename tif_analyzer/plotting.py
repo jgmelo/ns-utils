@@ -104,7 +104,9 @@ def build_figure(
     ax.set_ylabel(axis_label(output.label, output.unit), color=TEXT_PRIMARY)
 
     title, subtitle = _title(report.config_snapshot, metric, len(xs))
-    ax.set_title(title, fontsize=13, color=TEXT_PRIMARY, loc="left", pad=18)
+    areas = report.config_snapshot.get("regions")
+    pad = 30 if areas else 18
+    ax.set_title(title, fontsize=13, color=TEXT_PRIMARY, loc="left", pad=pad)
     ax.annotate(
         subtitle,
         xy=(0.0, 1.02),
@@ -113,6 +115,18 @@ def build_figure(
         color=TEXT_MUTED,
         annotation_clip=False,
     )
+    if areas:
+        # A saved figure has to say which areas produced these numbers.
+        source = report.config_snapshot.get("regions_source")
+        text = f"areas: {areas}" + (f"  ·  drawn on {source}" if source else "")
+        ax.annotate(
+            text,
+            xy=(0.0, 1.06),
+            xycoords="axes fraction",
+            fontsize=8,
+            color=TEXT_MUTED,
+            annotation_clip=False,
+        )
 
     ax.grid(True, color=GRID_COLOR, linewidth=0.8, alpha=0.9, zorder=0)
     ax.set_axisbelow(True)

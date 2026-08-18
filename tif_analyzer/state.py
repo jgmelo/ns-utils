@@ -15,6 +15,7 @@ from .analysis import RunReport
 from .discovery import DEFAULT_GLOB, DEFAULT_PATTERN, DiscoveryReport, FileRecord
 from .loading import DEFAULT_PAGE_POLICY, PagePolicy
 from .preprocess import PreprocessStep
+from .regions import RegionSet
 
 #: Changing any of these clears ``records``, ``discovery`` and ``report``.
 INVALIDATING_FIELDS = frozenset(
@@ -26,6 +27,7 @@ INVALIDATING_FIELDS = frozenset(
         "preprocess_steps",
         "allow_duplicates",
         "page_policy",
+        "regions",
     }
 )
 
@@ -39,6 +41,7 @@ class AppState:
     preprocess_steps: list[PreprocessStep] = field(default_factory=list)
     allow_duplicates: bool = False
     page_policy: PagePolicy = DEFAULT_PAGE_POLICY
+    regions: RegionSet | None = None
     records: list[FileRecord] | None = None
     discovery: DiscoveryReport | None = None
     report: RunReport | None = None
@@ -81,3 +84,13 @@ class AppState:
     @property
     def has_results(self) -> bool:
         return self.report is not None and bool(self.report.results)
+
+    @property
+    def metric_needs_regions(self) -> bool:
+        from . import metrics
+
+        return metrics.get(self.metric_key).needs_regions
+
+    @property
+    def regions_ready(self) -> bool:
+        return not self.metric_needs_regions or self.regions is not None
