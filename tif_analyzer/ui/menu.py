@@ -23,11 +23,13 @@ from .. import (
     config as config_mod,
     discovery,
     export,
+    interference,
     loading,
     metrics,
     plotting,
     roi_sidecar,
 )
+from ..interference import frames as interference_frames
 from ..cache import ResultCache
 from ..discovery import DiscoveryError, DuplicateParameterError
 from ..regions import RegionError
@@ -107,6 +109,9 @@ class MenuApp:
             blocked["r"] = "no matching files"
         elif not self.state.regions_ready:
             blocked["r"] = f"metric {self.state.metric_key} needs the areas — press [a]"
+
+        if not self.state.has_records:
+            blocked["i"] = "no matching files to inspect"
 
         can_select, reason = selection.can_select()
         if not can_select:
@@ -265,6 +270,53 @@ class MenuApp:
         self.discovery_error = None
         self._persist()
 
+    def action_interference(self) -> None:
+        """Characterise fixed-pattern interference in one frame of the series.
+
+        A single-frame diagnostic living in a series menu: it reads one file
+        (optionally against a second) and prints a report. The Hz conversion
+        needs acquisition metadata, which only the CLI takes.
+        """
+        if not self.state.records:
+            return
+        record = prompts.prompt_reference_file(self.state.records)
+        if record is None:
+            return
+
+        reference_record = None
+        choice = prompts.choose_from_menu(
+            "Reference channel",
+            [
+                ("none", "no reference — characterise this frame alone"),
+                ("pick", "choose a simultaneously-acquired reference frame"),
+            ],
+            "none",
+            self.reader.read,
+        )
+        if choice is None:
+            return
+        if choice == "pick":
+            reference_record = prompts.prompt_reference_file(self.state.records)
+            if reference_record is None:
+                return
+
+        render.clear_screen(self.clear)
+        try:
+            result = interference.characterise(
+                record.path,
+                reference_record.path if reference_record else None,
+                page_policy=self.state.page_policy,
+            )
+        except (loading.LoadError, interference_frames.FrameError, ValueError) as exc:
+            self.messages.append(f"  ✗ {exc}")
+            return
+
+        print(interference.render_report(result))
+        print(
+            "\n  (no line rate here — run tif-interference --line-rate ... for the Hz conversion)"
+        )
+        render.pause(self.reader.read)
+
     def action_run(self) -> None:
         self.ensure_discovery()
         if self.discovery_error is not None or not self.state.has_records:
@@ -365,6 +417,7 @@ class MenuApp:
             return False
         actions = {
             "a": self.action_areas,
+            "i": self.action_interference,
             "d": self.action_directory,
             "p": self.action_pattern,
             "g": self.action_glob,

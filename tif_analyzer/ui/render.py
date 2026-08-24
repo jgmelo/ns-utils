@@ -102,12 +102,12 @@ def menu(state: AppState, blockers: dict[str, str | None]) -> str:
         (f"[!] allow duplicates: {'ON' if state.allow_duplicates else 'OFF'}", ""),
     ]
     left.append(entry("a", "select areas" if state.regions is None else "redraw areas"))
+    right.append(entry("i", "interference report"))
     if len(spec.outputs) > 1:
-        right.append(entry("s", "select series"))
-        left.append(("[q] quit", ""))
+        left.append(entry("s", "select series"))
         right.append(("", ""))
-    else:
-        right.append(("[q] quit", ""))
+    left.append(("[q] quit", ""))
+    right.append(("", ""))
 
     # The column width comes from the labels alone, so a long reason never
     # shifts the second column around between redraws.

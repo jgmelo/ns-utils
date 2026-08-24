@@ -16,6 +16,10 @@ medida_017_12.5mW.tiff ─┘
 Duas métricas na v1: desvio-padrão da imagem inteira (`std`) e razão sinal-ruído
 a partir de duas áreas selecionadas na tela (`snr`).
 
+Traz também uma ferramenta separada, `tif-interference`, que caracteriza
+interferência de padrão fixo num quadro e diz se a subtração entre canais é
+viável — veja [Interferência de padrão fixo](#interferência-de-padrão-fixo).
+
 ## Instalação
 
 ```bash
@@ -50,7 +54,8 @@ Tela principal:
   [m] metric           [g] glob filter
   [r] run analysis     [v] view plot
   [e] export CSV       [!] allow duplicates: OFF
-  [a] select areas     [s] select series
+  [a] select areas     [i] interference report
+  [s] select series
   [q] quit
 ```
 
@@ -138,6 +143,86 @@ python scripts/make_sample_series.py /tmp/beam --beam --size 160
 tif-analyzer /tmp/beam --metric snr
 ```
 
+## Interferência de padrão fixo
+
+Ferramenta de **quadro único**, separada do fluxo de séries: um TIFF entra, um
+laudo de texto sai. Responde a uma pergunta só — *dá para cancelar essa
+interferência subtraindo o canal de referência?*
+
+```bash
+tif-interference sinal.tif -r referencia.tif --line-rate 1000 --flyback 0.1
+```
+
+Sem `--line-rate` tudo funciona, menos a conversão para Hz, que é declarada como
+não calculada em vez de chutada. No TUI, a tecla `[i]` roda o mesmo laudo sobre
+um arquivo da série (sem metadados de aquisição).
+
+Código de saída: `0` viável, `3` não viável, `4` inconclusivo, `1`/`2` erro.
+
+### As sete operações
+
+| # | O que faz |
+|---|-----------|
+| 1 | Carrega em float64 sem reescalar; registra shape, dtype de disco, min/mediana/max e satura&shy;ção no limite do tipo |
+| 2 | Máscara de beads por mediana/MAD iterativo; fração rejeitada global **e** da pior coluna |
+| 3 | Perfil de padrão fixo = mediana por coluna, centrada; variante mascarada e a discrepância entre as duas |
+| 4 | FFT janelada, cluster dominante, centroide ponderado por potência, período, largura, fração da potência |
+| 5 | Hz a partir do dwell, **família de alias** e limite de Nyquist declarado |
+| 6 | Fase por linha: deriva em °/linha e estabilidade de amplitude |
+| 7 | Comparação entre canais: período, razão de amplitude, Pearson bruto **e** restrito à banda, offset de fase por Hilbert |
+
+### Convenção de eixos
+
+Cada **linha** é uma linha de varredura e o índice de coluna é tempo, então a
+interferência aparece como listras verticais e o perfil é a mediana por coluna.
+O laudo mede a força da listra nos dois eixos e avisa se o padrão for mais forte
+no outro — analisar o eixo errado produz números plausíveis e errados.
+
+### Flyback
+
+Uma flag decide duas coisas acopladas. Sem `--frame-includes-flyback`, as
+colunas salvas cobrem só a parte ativa: `t_dwell = T_linha·(1−flyback)/N` e
+nenhuma coluna é descartada. Com ela, as colunas cobrem o período inteiro:
+`t_dwell = T_linha/N` e as colunas de retorno saem do perfil.
+
+### O que o veredito diz, e o que ele não diz
+
+Viável quando os períodos concordam dentro da tolerância **e** a correlação
+restrita à banda passa do limiar. Cada verificação aparece com **o valor ao lado
+do limiar**, para você discordar sem ler código.
+
+Dois avisos independentes do veredito:
+
+- **Lacuna entre correlação bruta e em banda.** Se as listras batem mas o resto
+  não, subtrair o quadro cru cancelaria o padrão e injetaria o ruído de banda
+  larga da referência no lugar.
+- **Correlação em banda negativa.** A referência carrega o padrão invertido:
+  precisa ser somada, não subtraída.
+
+A deriva de fase separa dois casos com consequências diferentes: **≈ 0** e o
+padrão está travado no gatilho de linha, então repete entre quadros e um padrão
+guardado serviria; **≠ 0** e ele anda entre quadros, então só referência
+simultânea cancela.
+
+**Todos os limiares são provisórios** — escolhidos por princípio, não calibrados
+contra quadros reais — e o laudo diz isso em toda execução. Ficam em
+`InterferenceParams`, ajustáveis por flag.
+
+### Alias
+
+A família inteira é emitida com o Nyquist explícito, porque num scan de 1 kHz
+60 Hz e 940 Hz são indistinguíveis a partir das amostras. Cada candidato traz a
+deriva de fase por linha que produziria, o que às vezes escolhe um deles — mas a
+previsão é sensível ao centroide, e quando a incerteza passa de meia volta o
+laudo declara que **não dá para separar** em vez de apontar um vencedor.
+
+### Dados de exemplo
+
+```bash
+python scripts/make_interference_frames.py /tmp/if --drift 0.3 --beads
+tif-interference /tmp/if/signal.tif -r /tmp/if/reference.tif --line-rate 1000
+```
+
 ## Uso como biblioteca
 
 Nada fora de `tif_analyzer/ui/` lê ou escreve no terminal — a camada de análise
@@ -175,6 +260,7 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `config.py` | configuração persistida (último diretório, padrão, métrica, glob, duplicatas). |
 | `state.py` | `AppState` + regra de invalidação. |
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
+| `interference/` | caracterização de padrão fixo: quadro único, laudo de texto, sem gráfico. |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
 
@@ -259,11 +345,14 @@ geometria 2-D da região precisaria de mais que isso.
 python -m pytest
 ```
 
-182 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+240 testes cobrindo parsing de nomes, duplicatas, política multi-página,
 contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
 cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
 config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas
-roteirizadas.
+roteirizadas. A parte de interferência é testada contra verdade plantada:
+quadros sintéticos com período, fase, deriva e offset conhecidos, mais os casos
+que têm de falhar — ruído puro sem detecção, eixo trocado, shapes divergentes,
+alias indecidível.
 
 ## Fora de escopo na v1
 

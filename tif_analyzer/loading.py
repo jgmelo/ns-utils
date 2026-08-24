@@ -67,6 +67,23 @@ def page_count(path: Path) -> int:
         return len(tif.pages)
 
 
+def image_dtype(path: Path) -> np.dtype:
+    """On-disk pixel dtype, read from the header only.
+
+    ``load_image`` converts to float64 on the way out, so the original type —
+    and with it the saturation level — has to be read separately.
+    """
+    try:
+        with tifffile.TiffFile(path) as tif:
+            if not tif.pages:
+                raise UnsupportedImageError(f"{Path(path).name}: file contains no image pages")
+            return np.dtype(tif.pages[0].dtype)
+    except LoadError:
+        raise
+    except (OSError, ValueError, tifffile.TiffFileError) as exc:
+        raise LoadError(f"{Path(path).name}: could not read TIFF header ({exc})") from exc
+
+
 def image_shape(path: Path) -> tuple[int, int]:
     """``(height, width)`` of the first page, read from the header only.
 

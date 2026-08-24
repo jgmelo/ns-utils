@@ -20,6 +20,7 @@ dev = ["pytest", "readchar"]
 
 [project.scripts]
 tif-analyzer = "tif_analyzer.app:main"
+tif-interference = "tif_analyzer.interference.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["tif_analyzer*"]
