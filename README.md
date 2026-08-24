@@ -54,7 +54,7 @@ Tela principal:
   [m] metric           [g] glob filter
   [r] run analysis     [v] view plot
   [e] export CSV       [!] allow duplicates: OFF
-  [a] select areas     [i] interference report
+  [a] select areas     [i] interference screen
   [s] select series
   [q] quit
 ```
@@ -154,8 +154,37 @@ tif-interference sinal.tif -r referencia.tif --line-rate 1000 --flyback 0.1
 ```
 
 Sem `--line-rate` tudo funciona, menos a conversão para Hz, que é declarada como
-não calculada em vez de chutada. No TUI, a tecla `[i]` roda o mesmo laudo sobre
-um arquivo da série (sem metadados de aquisição).
+não calculada em vez de chutada.
+
+No TUI, `[i]` abre uma **tela própria** onde se preenche tudo antes de rodar:
+
+```
+  Interference — fixed-pattern characterisation
+
+  signal:      medida_002_30mW[PMT2].tif
+  reference:   medida_003_30mW[PMT1].tif
+  line rate:   1000 Hz
+  resolution:  (frame width: 512 px)
+  flyback:     10.0%   (in the frame: no)
+  timing:      dwell 1757.81 ns/px   sampling 568.9 kHz   Nyquist 284.4 kHz
+
+  [f] signal frame        [r] reference frame
+  [l] line rate           [n] resolution
+  [y] flyback fraction    [w] flyback in the frame: NO
+  [g] run the report      [o] save last report
+  [c] clear reference     [b] back to the main menu
+```
+
+A linha `timing:` recalcula a cada mudança, **antes** de rodar qualquer coisa:
+um line rate errado aparece como um Nyquist errado, não como uma resposta
+errada. Os campos numéricos aceitam `none` para limpar, e o flyback aceita
+tanto `0.1` quanto `10%`.
+
+Esses metadados ficam num sidecar `.tif-analyzer-acquisition.json` no diretório
+dos dados, pelo mesmo motivo das áreas: descrevem como aquele conjunto foi
+adquirido, não como você gosta de trabalhar. Redigitar o line rate toda sessão
+é o jeito mais rápido de acabar com um erro de digitação numa frequência
+publicada.
 
 Código de saída: `0` viável, `3` não viável, `4` inconclusivo, `1`/`2` erro.
 
@@ -250,6 +279,7 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `discovery.py` | glob + regex + `FileRecord`s + duplicatas. Nenhum I/O de imagem. |
 | `regions.py` | `Rect`/`Ellipse`/`RegionSet`, máscara, extração de pixels, hash das áreas. |
 | `roi_sidecar.py` | leitura/escrita de `.tif-analyzer-rois.json` no diretório dos dados. |
+| `acquisition_sidecar.py` | leitura/escrita de `.tif-analyzer-acquisition.json` (line rate, flyback). |
 | `loading.py` | abre TIFFs via `tifffile`, aplica a política multi-página, devolve `float64`. |
 | `preprocess.py` | pipeline ordenado + serialização canônica + hash. Vazio na v1. |
 | `metrics.py` | registro de métricas via `@register`. Nada fora daqui lista métricas. |
@@ -260,6 +290,7 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `config.py` | configuração persistida (último diretório, padrão, métrica, glob, duplicatas). |
 | `state.py` | `AppState` + regra de invalidação. |
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
+| `ui/interference_screen.py` | segunda tela: metadados de aquisição e execução do laudo. |
 | `interference/` | caracterização de padrão fixo: quadro único, laudo de texto, sem gráfico. |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
@@ -345,7 +376,7 @@ geometria 2-D da região precisaria de mais que isso.
 python -m pytest
 ```
 
-240 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+264 testes cobrindo parsing de nomes, duplicatas, política multi-página,
 contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
 cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
 config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas

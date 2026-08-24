@@ -133,8 +133,66 @@ def prompt_glob(default: str) -> str | None:
     return raw
 
 
-def prompt_export_path(default: Path) -> Path | None:
-    print(f"\n  Export CSV to   ({CANCEL_HINT}, Tab completes paths)")
+#: Typed at a numeric prompt to clear the value rather than change it.
+CLEAR_WORDS = frozenset({"none", "-", "clear", "unset"})
+
+
+def prompt_number(
+    message: str,
+    default: float | int | None,
+    kind: type = float,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    allow_clear: bool = True,
+    percent_ok: bool = False,
+):
+    """Read a number. ``None`` cancels; ``"none"`` clears when *allow_clear*.
+
+    Returns the sentinel :data:`CLEARED` when the user asked to unset the value,
+    so "cancelled" and "cleared" stay distinguishable.
+    """
+    hint = f"  ({CANCEL_HINT}" + (", type 'none' to clear" if allow_clear else "") + ")"
+    print(f"\n  {message}{hint}")
+    while True:
+        raw = prompt_line("  > ", "" if default is None else str(default))
+        if raw is None:
+            return None
+        text = raw.strip().lower()
+        if allow_clear and text in CLEAR_WORDS:
+            return CLEARED
+        scale = 1.0
+        if percent_ok and text.endswith("%"):
+            text = text[:-1].strip()
+            scale = 0.01
+        try:
+            value = kind(float(text) * scale) if scale != 1.0 else kind(text)
+        except (TypeError, ValueError):
+            print(f"  ! not a number: {raw!r}")
+            continue
+        if minimum is not None and value < minimum:
+            print(f"  ! must be at least {minimum}")
+            continue
+        if maximum is not None and value >= maximum:
+            print(f"  ! must be below {maximum}")
+            continue
+        return value
+
+
+class _Cleared:
+    """Sentinel for 'the user cleared this field'."""
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "CLEARED"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+CLEARED = _Cleared()
+
+
+def prompt_export_path(default: Path, title: str = "Export CSV to") -> Path | None:
+    print(f"\n  {title}   ({CANCEL_HINT}, Tab completes paths)")
     raw = prompt_line("  file> ", str(default), _path_completer)
     if raw is None:
         return None
@@ -176,8 +234,10 @@ def metric_entries() -> list[tuple[str, str]]:
     return entries
 
 
-def prompt_reference_file(records: Sequence, limit: int = 20):
-    """Pick the image the areas are drawn on. ``None`` means cancelled.
+def prompt_reference_file(
+    records: Sequence, limit: int = 20, title: str = "Reference image for the areas"
+):
+    """Pick a file from the discovered records. ``None`` means cancelled.
 
     The default is the first matched file; a number picks from the list and any
     other text is matched against filenames, so a long series does not force
@@ -185,7 +245,7 @@ def prompt_reference_file(records: Sequence, limit: int = 20):
     """
     if not records:
         return None
-    print(f"\n  Reference image for the areas   ({CANCEL_HINT})")
+    print(f"\n  {title}   ({CANCEL_HINT})")
     for index, record in enumerate(records[:limit], start=1):
         print(f"    [{index:>2}] {record.path.name}   ({record.param_name}={record.param_value:g})")
     if len(records) > limit:

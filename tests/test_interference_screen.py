@@ -1,0 +1,239 @@
+"""The interference screen and its acquisition sidecar."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+import tifffile
+
+from tif_analyzer import acquisition_sidecar
+from tif_analyzer.discovery import FileRecord
+from tif_analyzer.interference.params import Acquisition
+from tif_analyzer.interference.synthetic import FrameSpec, make_pair
+from tif_analyzer.ui import interference_screen as screen_mod, prompts
+from tif_analyzer.ui.interference_screen import InterferenceScreen, InterferenceSettings
+
+from .test_ui import ScriptedReader
+
+
+@pytest.fixture
+def frames_dir(tmp_path):
+    signal, reference, _ = make_pair(
+        FrameSpec(shape=(64, 512), period_px=16.0, amplitude=40.0, noise_sigma=5.0)
+    )
+    directory = tmp_path / "data"
+    directory.mkdir()
+    tifffile.imwrite(directory / "medida_001_1mW.tif", signal)
+    tifffile.imwrite(directory / "medida_002_2mW.tif", reference)
+    return directory
+
+
+@pytest.fixture
+def records(frames_dir):
+    return [
+        FileRecord(frames_dir / "medida_001_1mW.tif", "power", 1.0, "1"),
+        FileRecord(frames_dir / "medida_002_2mW.tif", "power", 2.0, "2"),
+    ]
+
+
+def make_screen(records, frames_dir, keys, **kwargs):
+    return InterferenceScreen(
+        records, frames_dir, ScriptedReader(keys).read, clear=False, **kwargs
+    )
+
+
+# -- settings ---------------------------------------------------------------- #
+
+
+def test_timing_needs_a_line_rate():
+    settings = InterferenceSettings(frame_width=500)
+    assert settings.timing() is None
+    settings.line_rate_hz = 1000.0
+    dwell, sampling, nyquist = settings.timing()
+    assert dwell == pytest.approx(2e-6)
+    assert sampling == pytest.approx(500_000.0)
+    assert nyquist == pytest.approx(250_000.0)
+
+
+def test_resolution_overrides_the_frame_width():
+    settings = InterferenceSettings(frame_width=500, resolution=1000, line_rate_hz=1000.0)
+    assert settings.pixels_per_line == 1000
+    assert settings.timing()[0] == pytest.approx(1e-6)
+
+
+def test_flyback_shortens_the_dwell_only_when_it_is_in_the_frame():
+    base = InterferenceSettings(frame_width=500, line_rate_hz=1000.0, flyback_fraction=0.2)
+    assert base.timing()[0] == pytest.approx(1.6e-6)
+    base.frame_includes_flyback = True
+    assert base.timing()[0] == pytest.approx(2e-6)
+
+
+# -- screen ------------------------------------------------------------------ #
+
+
+def test_screen_starts_on_the_first_record_and_reads_its_width(records, frames_dir):
+    screen = make_screen(records, frames_dir, "b")
+    assert screen.settings.signal == records[0]
+    assert screen.settings.frame_width == 512
+    assert screen.settings.reference is None
+
+
+def test_header_shows_the_implied_nyquist(records, frames_dir):
+    screen = make_screen(records, frames_dir, "b")
+    assert "set the line rate" in screen.header()
+    screen.settings.line_rate_hz = 1000.0
+    header = screen.header()
+    assert "dwell 1953.12 ns/px" in header
+    assert "Nyquist 256 kHz" in header
+
+
+def test_options_are_blocked_with_a_reason(records, frames_dir, capsys):
+    screen = make_screen(records, frames_dir, "b")
+    screen.run()
+    output = capsys.readouterr().out
+    assert "[o] save last report  (run the report first)" in output
+    assert "[c] clear reference  (no reference set)" in output
+
+
+def test_back_leaves_the_screen(records, frames_dir):
+    screen = make_screen(records, frames_dir, "b")
+    screen.run()  # returns rather than hanging
+    assert screen.last_report is None
+
+
+def test_line_rate_is_entered_and_persisted(records, frames_dir, monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: 1000.0)
+    screen = make_screen(records, frames_dir, ["l", "b"])
+    screen.run()
+    assert screen.settings.line_rate_hz == 1000.0
+    assert acquisition_sidecar.load(frames_dir).acquisition.line_rate_hz == 1000.0
+
+
+def test_clearing_a_field_unsets_it(records, frames_dir, monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: prompts.CLEARED)
+    screen = make_screen(records, frames_dir, ["l", "b"])
+    screen.settings.line_rate_hz = 500.0
+    screen.run()
+    assert screen.settings.line_rate_hz is None
+
+
+def test_cancelling_a_field_leaves_it_alone(records, frames_dir, monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: None)
+    screen = make_screen(records, frames_dir, ["l", "b"])
+    screen.settings.line_rate_hz = 500.0
+    screen.run()
+    assert screen.settings.line_rate_hz == 500.0
+
+
+def test_flyback_toggle_persists(records, frames_dir):
+    screen = make_screen(records, frames_dir, ["w", "b"])
+    screen.run()
+    assert screen.settings.frame_includes_flyback is True
+    assert acquisition_sidecar.load(frames_dir).acquisition.frame_includes_flyback is True
+
+
+def test_reference_must_differ_from_the_signal(records, frames_dir, monkeypatch, capsys):
+    monkeypatch.setattr(prompts, "prompt_reference_file", lambda *a, **k: records[0])
+    screen = make_screen(records, frames_dir, ["r", "b"])
+    screen.run()
+    assert screen.settings.reference is None
+    assert "must be a different file" in capsys.readouterr().out
+
+
+def test_reference_is_set_and_cleared(records, frames_dir, monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_reference_file", lambda *a, **k: records[1])
+    screen = make_screen(records, frames_dir, ["r", "b"])
+    screen.run()
+    assert screen.settings.reference == records[1]
+    screen.read_key = ScriptedReader(["c", "b"]).read
+    screen.run()
+    assert screen.settings.reference is None
+
+
+def test_running_produces_a_report(records, frames_dir, monkeypatch, capsys):
+    monkeypatch.setattr(prompts, "prompt_reference_file", lambda *a, **k: records[1])
+    screen = make_screen(records, frames_dir, ["r", "g", "enter", "b"])
+    screen.settings.line_rate_hz = 1000.0
+    screen.run()
+    assert screen.last_report is not None
+    output = capsys.readouterr().out
+    assert "SUBTRACTION VIABLE" in output
+    assert "NYQUIST LIMIT" in output
+
+
+def test_running_without_a_line_rate_says_so(records, frames_dir, capsys):
+    screen = make_screen(records, frames_dir, ["g", "enter", "b"])
+    screen.run()
+    assert "no line rate supplied" in capsys.readouterr().out
+
+
+def test_report_can_be_saved(records, frames_dir, tmp_path, monkeypatch):
+    target = tmp_path / "report.txt"
+    monkeypatch.setattr(prompts, "prompt_export_path", lambda *a, **k: target)
+    screen = make_screen(records, frames_dir, ["g", "enter", "o", "b"])
+    screen.run()
+    assert "FIXED-PATTERN INTERFERENCE" in target.read_text(encoding="utf-8")
+
+
+def test_a_bad_frame_is_reported_not_crashed(records, frames_dir, capsys):
+    (frames_dir / "medida_001_1mW.tif").write_bytes(b"not a tiff")
+    screen = make_screen(records, frames_dir, ["g", "b"])
+    screen.run()
+    assert "✗" in capsys.readouterr().out
+    assert screen.last_report is None
+
+
+def test_persistence_can_be_turned_off(records, frames_dir):
+    screen = make_screen(records, frames_dir, ["w", "b"], persist=False)
+    screen.run()
+    assert acquisition_sidecar.sidecar_path(frames_dir).exists() is False
+
+
+# -- sidecar ----------------------------------------------------------------- #
+
+
+def test_sidecar_round_trip(tmp_path):
+    acquisition = Acquisition(
+        line_rate_hz=1200.0, resolution=1024, flyback_fraction=0.15, frame_includes_flyback=True
+    )
+    path, notice = acquisition_sidecar.save(tmp_path, acquisition)
+    assert notice is None
+    assert path.name == ".tif-analyzer-acquisition.json"
+    assert acquisition_sidecar.load(tmp_path).acquisition == acquisition
+
+
+def test_missing_sidecar_is_a_non_event(tmp_path):
+    loaded = acquisition_sidecar.load(tmp_path)
+    assert loaded.acquisition is None and loaded.notice is None
+
+
+def test_corrupt_sidecar_is_reported(tmp_path):
+    acquisition_sidecar.sidecar_path(tmp_path).write_text("{oops")
+    loaded = acquisition_sidecar.load(tmp_path)
+    assert loaded.acquisition is None
+    assert "unreadable" in loaded.notice
+
+
+def test_impossible_sidecar_values_are_refused(tmp_path):
+    acquisition_sidecar.sidecar_path(tmp_path).write_text(
+        json.dumps({"line_rate_hz": -5.0})
+    )
+    loaded = acquisition_sidecar.load(tmp_path)
+    assert loaded.acquisition is None
+    assert "malformed" in loaded.notice
+
+
+def test_saved_acquisition_is_picked_up_by_a_new_screen(records, frames_dir, capsys):
+    acquisition_sidecar.save(frames_dir, Acquisition(line_rate_hz=750.0, flyback_fraction=0.1))
+    screen = make_screen(records, frames_dir, "b")
+    screen.run()
+    assert screen.settings.line_rate_hz == 750.0
+    assert screen.settings.flyback_fraction == pytest.approx(0.1)
+    assert "acquisition loaded from" in capsys.readouterr().out
+
+
+def test_screen_module_exposes_a_readable_hz_formatter():
+    assert screen_mod._fmt_hz(500.0) == "500 Hz"
+    assert screen_mod._fmt_hz(1500.0) == "1.5 kHz"
+    assert screen_mod._fmt_hz(2.5e6) == "2.5 MHz"

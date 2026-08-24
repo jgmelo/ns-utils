@@ -10,6 +10,8 @@ The state machine of §11::
           ├─ [s] → MENU_SERIES      shown only when metric has >1 output
           ├─ [v] → PLOT             blocking window; Agg fallback
           ├─ [e] → PROMPT_EXPORT
+          ├─ [a] → SELECT_AREAS     blocking window; needs a GUI
+          ├─ [i] → INTERFERENCE     its own screen, with its own keys
           ├─ [!] → toggle duplicates
           └─ [q] → exit
 """
@@ -23,18 +25,17 @@ from .. import (
     config as config_mod,
     discovery,
     export,
-    interference,
     loading,
     metrics,
     plotting,
     roi_sidecar,
 )
-from ..interference import frames as interference_frames
 from ..cache import ResultCache
 from ..discovery import DiscoveryError, DuplicateParameterError
 from ..regions import RegionError
 from ..state import AppState
 from . import prompts, render, selection
+from .interference_screen import InterferenceScreen
 from .keys import KeyReader
 
 
@@ -57,6 +58,7 @@ class MenuApp:
         self.notices: list[str] = []
         self.messages: list[str] = []
         self.discovery_error: DiscoveryError | None = None
+        self.interference_screen: InterferenceScreen | None = None
         self.running = False
 
     # -- persistence -------------------------------------------------------- #
@@ -271,51 +273,24 @@ class MenuApp:
         self._persist()
 
     def action_interference(self) -> None:
-        """Characterise fixed-pattern interference in one frame of the series.
-
-        A single-frame diagnostic living in a series menu: it reads one file
-        (optionally against a second) and prints a report. The Hz conversion
-        needs acquisition metadata, which only the CLI takes.
-        """
+        """Open the interference screen: pick frames, fill in the acquisition,
+        run the report there. It keeps its own state — none of it belongs to the
+        series pipeline, so none of it may invalidate it."""
         if not self.state.records:
             return
-        record = prompts.prompt_reference_file(self.state.records)
-        if record is None:
-            return
-
-        reference_record = None
-        choice = prompts.choose_from_menu(
-            "Reference channel",
-            [
-                ("none", "no reference — characterise this frame alone"),
-                ("pick", "choose a simultaneously-acquired reference frame"),
-            ],
-            "none",
-            self.reader.read,
-        )
-        if choice is None:
-            return
-        if choice == "pick":
-            reference_record = prompts.prompt_reference_file(self.state.records)
-            if reference_record is None:
-                return
-
-        render.clear_screen(self.clear)
-        try:
-            result = interference.characterise(
-                record.path,
-                reference_record.path if reference_record else None,
+        if self.interference_screen is None or self.interference_screen.directory != self.state.directory:
+            self.interference_screen = InterferenceScreen(
+                self.state.records,
+                self.state.directory,
+                self.reader.read,
                 page_policy=self.state.page_policy,
+                clear=self.clear,
+                persist=self.persist,
             )
-        except (loading.LoadError, interference_frames.FrameError, ValueError) as exc:
-            self.messages.append(f"  ✗ {exc}")
-            return
-
-        print(interference.render_report(result))
-        print(
-            "\n  (no line rate here — run tif-interference --line-rate ... for the Hz conversion)"
-        )
-        render.pause(self.reader.read)
+        else:
+            # Same directory, possibly a new glob or pattern: refresh the list.
+            self.interference_screen.records = self.state.records
+        self.interference_screen.run()
 
     def action_run(self) -> None:
         self.ensure_discovery()

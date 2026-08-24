@@ -102,7 +102,7 @@ def menu(state: AppState, blockers: dict[str, str | None]) -> str:
         (f"[!] allow duplicates: {'ON' if state.allow_duplicates else 'OFF'}", ""),
     ]
     left.append(entry("a", "select areas" if state.regions is None else "redraw areas"))
-    right.append(entry("i", "interference report"))
+    right.append(entry("i", "interference screen"))
     if len(spec.outputs) > 1:
         left.append(entry("s", "select series"))
         right.append(("", ""))
