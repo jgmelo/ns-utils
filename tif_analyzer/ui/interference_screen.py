@@ -18,7 +18,7 @@ from ..interference import characterise, render_report
 from ..interference.figures import build_mask_figure
 from ..interference.frames import FrameError, load_frame
 from ..interference.mask import build_mask
-from ..interference.params import Acquisition, AcquisitionError
+from ..interference.params import Acquisition, AcquisitionError, InterferenceParams
 from . import prompts, render
 from .prompts import CLEARED
 
@@ -35,6 +35,11 @@ class InterferenceSettings:
     flyback_fraction: float = 0.0
     frame_includes_flyback: bool = False
     frame_width: int | None = None  # read from the signal frame's header
+    #: Bead rejection threshold, in robust sigmas above the background median.
+    #: An analysis knob rather than acquisition metadata, so it is not written
+    #: to the acquisition sidecar; it is meant to be tuned against the mask
+    #: figure within a session, and pinned with --mad-k once it settles.
+    mad_k: float = InterferenceParams().mad_k
 
     def acquisition(self) -> Acquisition:
         return Acquisition(
@@ -43,6 +48,9 @@ class InterferenceSettings:
             flyback_fraction=self.flyback_fraction,
             frame_includes_flyback=self.frame_includes_flyback,
         )
+
+    def params(self) -> InterferenceParams:
+        return InterferenceParams(mad_k=self.mad_k)
 
     def adopt(self, acquisition: Acquisition) -> None:
         self.line_rate_hz = acquisition.line_rate_hz
@@ -168,6 +176,10 @@ class InterferenceScreen:
             f"  flyback:     {settings.flyback_fraction:.1%}"
             f"   (in the frame: {'YES' if settings.frame_includes_flyback else 'no'})"
         )
+        lines.append(
+            f"  bead cut:    median + {settings.mad_k:g}σ"
+            + ("   (default)" if settings.mad_k == InterferenceParams().mad_k else "")
+        )
 
         timing = settings.timing()
         if timing is None:
@@ -195,6 +207,7 @@ class InterferenceScreen:
                 entry("y", "flyback fraction"),
                 f"[w] flyback in the frame: {'YES' if self.settings.frame_includes_flyback else 'NO'}",
             ),
+            (entry("k", "bead cut (k sigmas)"), ("")),
             (entry("g", "run the report"), entry("v", "view the bead mask")),
             (entry("o", "save last report"), entry("c", "clear reference")),
             ("[b] back to the main menu", ""),
@@ -277,6 +290,24 @@ class InterferenceScreen:
         self.settings.flyback_fraction = 0.0 if value is CLEARED else float(value)
         self._persist()
 
+    def action_mad_k(self) -> None:
+        """The bead rejection threshold, in robust sigmas.
+
+        Raise it to keep more of the frame as background, lower it to cut more
+        aggressively. [v] is the way to judge the result: the histogram panel
+        shows where the cut lands in the value distribution.
+        """
+        value = prompts.prompt_number(
+            "Bead cut in robust sigmas above the background median (default 3)",
+            self.settings.mad_k,
+            kind=float,
+            minimum=0.1,
+            allow_clear=False,
+        )
+        if value is None:
+            return
+        self.settings.mad_k = float(value)
+
     def action_toggle_includes_flyback(self) -> None:
         self.settings.frame_includes_flyback = not self.settings.frame_includes_flyback
         self._persist()
@@ -297,6 +328,7 @@ class InterferenceScreen:
                 self.settings.signal.path,
                 self.settings.reference.path if self.settings.reference else None,
                 acquisition=acquisition,
+                params=self.settings.params(),
                 page_policy=self.page_policy,
             )
         except (loading.LoadError, FrameError, ValueError) as exc:
@@ -322,8 +354,9 @@ class InterferenceScreen:
             self.messages.append(f"  ✗ {exc}")
             return
 
-        mask_result = build_mask(frame.data)
-        figure = build_mask_figure(frame, mask_result)
+        params = self.settings.params()
+        mask_result = build_mask(frame.data, params)
+        figure = build_mask_figure(frame, mask_result, params)
         default = plotting.writable_path(
             f"bead-mask_{self.settings.signal.path.stem}.png", self.directory
         )
@@ -363,6 +396,7 @@ class InterferenceScreen:
             "l": self.action_line_rate,
             "n": self.action_resolution,
             "y": self.action_flyback,
+            "k": self.action_mad_k,
             "w": self.action_toggle_includes_flyback,
             "g": self.action_run,
             "v": self.action_view_mask,

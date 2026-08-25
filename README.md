@@ -166,15 +166,23 @@ No TUI, `[i]` abre uma **tela própria** onde se preenche tudo antes de rodar:
   line rate:   1000 Hz
   resolution:  (frame width: 512 px)
   flyback:     10.0%   (in the frame: no)
+  bead cut:    median + 3σ   (default)
   timing:      dwell 1757.81 ns/px   sampling 568.9 kHz   Nyquist 284.4 kHz
 
   [f] signal frame        [r] reference frame
   [l] line rate           [n] resolution
   [y] flyback fraction    [w] flyback in the frame: NO
+  [k] bead cut (k sigmas)
   [g] run the report      [v] view the bead mask
   [o] save last report    [c] clear reference
   [b] back to the main menu
 ```
+
+`[k]` ajusta o corte da máscara de beads, em sigmas robustos acima da mediana
+do fundo: mais alto mantém mais quadro como fundo, mais baixo corta com mais
+agressividade. É um parâmetro de análise, não de aquisição, então **não** vai
+para o sidecar — a ideia é ajustar olhando a figura e, quando o valor assentar,
+fixá-lo com `--mad-k` na CLI.
 
 `[v]` abre a figura da máscara de beads: o quadro com os pixels rejeitados
 pintados por cima, a fração rejeitada por coluna alinhada ao eixo x da imagem
@@ -385,7 +393,7 @@ geometria 2-D da região precisaria de mais que isso.
 python -m pytest
 ```
 
-268 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+274 testes cobrindo parsing de nomes, duplicatas, política multi-página,
 contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
 cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
 config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas

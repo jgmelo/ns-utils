@@ -50,11 +50,12 @@ def _frame_block(analysis: ChannelAnalysis, label: str) -> list[str]:
     return lines
 
 
-def _mask_block(analysis: ChannelAnalysis) -> list[str]:
+def _mask_block(analysis: ChannelAnalysis, mad_k: float = 3.0) -> list[str]:
     result = analysis.mask
     lines = [
         f"    background median {_fmt(result.median)} counts, MAD {_fmt(result.mad)} "
-        f"(robust sigma {_fmt(result.sigma)}), rejecting above {_fmt(result.threshold)}",
+        f"(robust sigma {_fmt(result.sigma)}), rejecting above "
+        f"{_fmt(result.threshold)} = median + {mad_k:g} sigma",
         f"    rejected {result.rejected_fraction:.2%} of pixels in {result.iterations} iteration(s)"
         + ("" if result.converged else ", DID NOT CONVERGE"),
         f"    worst column: #{result.worst_column_index} with "
@@ -137,7 +138,7 @@ def render_report(result: InterferenceResult) -> str:
         out.append("  consistent with rows being scan lines and time running along columns")
 
     out.append(_heading("2. BEAD MASK (signal)"))
-    out.extend(_mask_block(result.signal))
+    out.extend(_mask_block(result.signal, result.params.mad_k))
 
     out.append(_heading("3. FIXED-PATTERN PROFILE (signal)"))
     out.extend(_profile_block(result.signal))
@@ -277,7 +278,9 @@ def render_report(result: InterferenceResult) -> str:
         if result.reference is not None:
             out.append("")
             out.append("    reference channel, on its own:")
-            out.extend(f"    {line}" for line in _mask_block(result.reference))
+            out.extend(
+                f"    {line}" for line in _mask_block(result.reference, result.params.mad_k)
+            )
 
     out.append("")
     out.append(_rule("═"))

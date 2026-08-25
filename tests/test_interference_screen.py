@@ -299,3 +299,57 @@ def test_view_mask_reports_a_bad_frame(records, frames_dir, capsys):
     screen.run()
     assert "✗" in capsys.readouterr().out
     assert not list(frames_dir.glob("bead-mask_*.png"))
+
+
+# -- bead cut knob ----------------------------------------------------------- #
+
+
+def test_default_bead_cut_matches_the_params_default():
+    from tif_analyzer.interference.params import InterferenceParams
+
+    assert InterferenceSettings().mad_k == InterferenceParams().mad_k
+    assert InterferenceSettings().params().mad_k == InterferenceParams().mad_k
+
+
+def test_bead_cut_is_shown_and_flagged_as_default(records, frames_dir):
+    screen = make_screen(records, frames_dir, "b")
+    assert "bead cut:    median + 3σ   (default)" in screen.header()
+    screen.settings.mad_k = 5.0
+    header = screen.header()
+    assert "median + 5σ" in header
+    assert "(default)" not in header
+
+
+def test_bead_cut_can_be_changed(records, frames_dir, monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: 5.0)
+    screen = make_screen(records, frames_dir, ["k", "b"])
+    screen.run()
+    assert screen.settings.mad_k == 5.0
+    assert screen.settings.params().mad_k == 5.0
+
+
+def test_cancelling_the_bead_cut_leaves_it_alone(records, frames_dir, monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: None)
+    screen = make_screen(records, frames_dir, ["k", "b"])
+    screen.run()
+    assert screen.settings.mad_k == 3.0
+
+
+def test_a_higher_cut_rejects_fewer_pixels(frames_dir):
+    """The knob has to actually reach the mask, not just the header."""
+    from tif_analyzer.interference.frames import load_frame
+    from tif_analyzer.interference.mask import build_mask
+    from tif_analyzer.interference.params import InterferenceParams
+
+    data = load_frame(frames_dir / "medida_001_1mW.tif").data
+    loose = build_mask(data, InterferenceParams(mad_k=8.0))
+    tight = build_mask(data, InterferenceParams(mad_k=2.0))
+    assert loose.threshold > tight.threshold
+    assert loose.rejected_fraction <= tight.rejected_fraction
+
+
+def test_the_report_names_the_cut_that_was_used(records, frames_dir, monkeypatch, capsys):
+    screen = make_screen(records, frames_dir, ["g", "enter", "b"])
+    screen.settings.mad_k = 5.0
+    screen.run()
+    assert "median + 5 sigma" in (screen.last_report or "")
