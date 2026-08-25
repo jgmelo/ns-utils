@@ -12,10 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import acquisition_sidecar, loading
+from .. import acquisition_sidecar, loading, plotting
 from ..discovery import FileRecord
 from ..interference import characterise, render_report
-from ..interference.frames import FrameError
+from ..interference.figures import build_mask_figure
+from ..interference.frames import FrameError, load_frame
+from ..interference.mask import build_mask
 from ..interference.params import Acquisition, AcquisitionError
 from . import prompts, render
 from .prompts import CLEARED
@@ -129,6 +131,8 @@ class InterferenceScreen:
         blocked: dict[str, str] = {}
         if self.settings.signal is None:
             blocked["g"] = "pick a signal frame first"
+        if self.settings.signal is None:
+            blocked["v"] = "pick a signal frame first"
         if self.last_report is None:
             blocked["o"] = "run the report first"
         if self.settings.reference is None:
@@ -191,8 +195,9 @@ class InterferenceScreen:
                 entry("y", "flyback fraction"),
                 f"[w] flyback in the frame: {'YES' if self.settings.frame_includes_flyback else 'NO'}",
             ),
-            (entry("g", "run the report"), entry("o", "save last report")),
-            (entry("c", "clear reference"), "[b] back to the main menu"),
+            (entry("g", "run the report"), entry("v", "view the bead mask")),
+            (entry("o", "save last report"), entry("c", "clear reference")),
+            ("[b] back to the main menu", ""),
         ]
         width = max(len(left) for left, _ in rows) + 4
         lines = [""]
@@ -302,6 +307,34 @@ class InterferenceScreen:
         print(self.last_report)
         render.pause(self.read_key)
 
+    def action_view_mask(self) -> None:
+        """Show where the bead mask actually landed.
+
+        The report gives the rejected fraction overall and in the worst column;
+        this shows where those rejections are, and where the cut sits in the
+        value distribution — the two things a number cannot convey.
+        """
+        if self.settings.signal is None:
+            return
+        try:
+            frame = load_frame(self.settings.signal.path, self.page_policy)
+        except (loading.LoadError, FrameError) as exc:
+            self.messages.append(f"  ✗ {exc}")
+            return
+
+        mask_result = build_mask(frame.data)
+        figure = build_mask_figure(frame, mask_result)
+        default = plotting.writable_path(
+            f"bead-mask_{self.settings.signal.path.stem}.png", self.directory
+        )
+        outcome = plotting.show_or_save_figure(figure, default_path=default)
+        if outcome.saved_to is not None:
+            self.messages.append(
+                f"  ✓ mask figure saved to {outcome.saved_to}  ({outcome.backend.name} backend)"
+            )
+        if not mask_result.reliable and mask_result.reason:
+            self.messages.append(f"  ! {mask_result.reason}")
+
     def action_save_report(self) -> None:
         if self.last_report is None:
             return
@@ -332,6 +365,7 @@ class InterferenceScreen:
             "y": self.action_flyback,
             "w": self.action_toggle_includes_flyback,
             "g": self.action_run,
+            "v": self.action_view_mask,
             "o": self.action_save_report,
         }
         action = actions.get(key)

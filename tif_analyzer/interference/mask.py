@@ -7,6 +7,13 @@ a median-based profile the way a bright bead does.
 The worst column matters as much as the overall fraction: one column swamped by
 a bead has an unreliable median, and that single point sits in the middle of the
 profile that the FFT then reads.
+
+Known limitation, visible in the mask figure: the MAD is computed on the frame
+as it is, so a strong fixed pattern inflates it and pushes the cut higher than
+the pixel noise alone would. The mask is then less aggressive on a striped frame
+than on a flat one. Masking on a stripe-subtracted frame would fix it, and would
+also make the mask depend on the profile it is meant to clean — that circularity
+is why v0 does not do it.
 """
 
 from __future__ import annotations

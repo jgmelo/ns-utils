@@ -55,6 +55,40 @@ def backend_info() -> BackendInfo:
     return BackendInfo(name=name, interactive=name.lower() not in NON_GUI_BACKENDS)
 
 
+#: Percentile clip used when an image is shown on screen.
+DISPLAY_PERCENTILES = (1.0, 99.0)
+#: A compact bright feature crushes the background to black under a linear
+#: stretch, and the background is usually the part being judged.
+DISPLAY_GAMMA = 0.4
+STRETCHES = ("gamma", "linear")
+
+
+def display_limits(image, percentiles: tuple[float, float] = DISPLAY_PERCENTILES):
+    """Percentile clip for display. Never applied to the analysed data."""
+    import numpy as np
+
+    low, high = (float(v) for v in np.percentile(image, percentiles))
+    if high <= low:
+        low, high = float(np.min(image)), float(np.max(image))
+    if high <= low:
+        high = low + 1.0
+    return low, high
+
+
+def display_norm(image, stretch: str = "gamma"):
+    """Colour normalisation for an image panel — display only.
+
+    The array handed to any metric stays in raw counts; this only decides how
+    those counts are painted.
+    """
+    from matplotlib.colors import Normalize, PowerNorm
+
+    low, high = display_limits(image)
+    if stretch == "gamma":
+        return PowerNorm(gamma=DISPLAY_GAMMA, vmin=low, vmax=high)
+    return Normalize(vmin=low, vmax=high)
+
+
 def axis_label(name: str, unit: str | None) -> str:
     return f"{name} ({unit})" if unit else name
 
@@ -138,15 +172,11 @@ def build_figure(
     return fig
 
 
-def default_save_path(snapshot: dict, series_key: str) -> Path:
-    """Where a headless plot lands: next to the data if that is writable, then
-    the CWD, then a temporary directory."""
+def writable_path(name: str, directory: Path | str | None = None) -> Path:
+    """Where a headless figure lands: next to the data if that is writable,
+    then the CWD, then a temporary directory."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    metric_key = str(snapshot.get("metric", "metric"))
-    series = "" if series_key == metric_key else f"_{series_key}"
-    name = f"tif-analyzer_{metric_key}{series}_{stamp}.png"
     candidates = []
-    directory = snapshot.get("directory")
     if directory:
         candidates.append(Path(directory))
     candidates.extend([Path.cwd(), Path(tempfile.gettempdir())])
@@ -162,11 +192,47 @@ def default_save_path(snapshot: dict, series_key: str) -> Path:
     return Path(tempfile.gettempdir()) / name
 
 
+def default_save_path(snapshot: dict, series_key: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    metric_key = str(snapshot.get("metric", "metric"))
+    series = "" if series_key == metric_key else f"_{series_key}"
+    return writable_path(
+        f"tif-analyzer_{metric_key}{series}_{stamp}.png", snapshot.get("directory")
+    )
+
+
 @dataclass(frozen=True)
 class PlotOutcome:
     shown: bool
     saved_to: Path | None
     backend: BackendInfo
+
+
+def show_or_save_figure(
+    figure,
+    save_to: Path | None = None,
+    default_path: Path | None = None,
+) -> PlotOutcome:
+    """Show *figure* in a blocking window, or write it to a PNG when the backend
+    cannot open one. Never silently does nothing — that is the failure mode §8
+    exists to prevent."""
+    import matplotlib.pyplot as plt
+
+    info = backend_info()
+    if save_to is None and info.interactive:
+        try:
+            plt.show()
+            return PlotOutcome(shown=True, saved_to=None, backend=info)
+        finally:
+            plt.close(figure)
+
+    path = Path(save_to) if save_to is not None else (default_path or Path("figure.png"))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(path, dpi=150, facecolor="white")
+    finally:
+        plt.close(figure)
+    return PlotOutcome(shown=False, saved_to=path, backend=info)
 
 
 def show_or_save(
@@ -179,23 +245,8 @@ def show_or_save(
 ) -> PlotOutcome:
     """Show the figure in a blocking window, or save it when the backend cannot
     open one (or when *save_to* is given)."""
-    import matplotlib.pyplot as plt
-
-    info = backend_info()
     key = series_key or metric.default_series
-    fig = build_figure(report, metric, key, param_name, param_unit)
-
-    if save_to is None and info.interactive:
-        try:
-            plt.show()
-            return PlotOutcome(shown=True, saved_to=None, backend=info)
-        finally:
-            plt.close(fig)
-
-    path = Path(save_to) if save_to is not None else default_save_path(report.config_snapshot, key)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(path, dpi=150, facecolor="white")
-    finally:
-        plt.close(fig)
-    return PlotOutcome(shown=False, saved_to=path, backend=info)
+    figure = build_figure(report, metric, key, param_name, param_unit)
+    return show_or_save_figure(
+        figure, save_to, default_save_path(report.config_snapshot, key)
+    )

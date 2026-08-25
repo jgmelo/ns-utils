@@ -237,3 +237,65 @@ def test_screen_module_exposes_a_readable_hz_formatter():
     assert screen_mod._fmt_hz(500.0) == "500 Hz"
     assert screen_mod._fmt_hz(1500.0) == "1.5 kHz"
     assert screen_mod._fmt_hz(2.5e6) == "2.5 MHz"
+
+
+# -- mask figure ------------------------------------------------------------- #
+
+
+def test_mask_figure_has_three_aligned_panels(frames_dir):
+    from tif_analyzer.interference.figures import build_mask_figure
+    from tif_analyzer.interference.frames import load_frame
+    from tif_analyzer.interference.mask import build_mask
+
+    frame = load_frame(frames_dir / "medida_001_1mW.tif")
+    result = build_mask(frame.data)
+    figure = build_mask_figure(frame, result)
+    image_axes, column_axes, histogram_axes = figure.axes[:3]
+
+    assert len(figure.axes) == 3
+    assert image_axes.get_title(loc="left").startswith("medida_001_1mW.tif")
+    # The column panel shares the image's x axis, so a spike lines up with the
+    # bead that caused it — that alignment is the point of the panel.
+    assert column_axes.get_shared_x_axes().joined(column_axes, image_axes)
+    assert histogram_axes.get_xlabel().startswith("pixel value")
+    assert histogram_axes.get_yscale() == "log"
+
+
+def test_mask_figure_marks_the_worst_column(frames_dir):
+    import numpy as np
+    import tifffile
+    from tif_analyzer.interference.figures import build_mask_figure
+    from tif_analyzer.interference.frames import load_frame
+    from tif_analyzer.interference.mask import build_mask
+
+    from tif_analyzer.interference.synthetic import make_frame
+
+    path = frames_dir / "beady.tif"
+    array, _ = make_frame(FrameSpec(shape=(64, 128), amplitude=20.0))
+    array = np.asarray(array, dtype=np.float64)
+    array[:, 40] = 60000.0  # one column entirely bead
+    tifffile.imwrite(path, array.astype("uint16"))
+
+    frame = load_frame(path)
+    result = build_mask(frame.data)
+    assert result.worst_column_index == 40
+    figure = build_mask_figure(frame, result)
+    labels = [text.get_text() for text in figure.axes[1].get_legend().get_texts()]
+    assert any("worst: column 40" in label for label in labels)
+
+
+def test_view_mask_saves_a_png_when_headless(records, frames_dir, capsys):
+    screen = make_screen(records, frames_dir, ["v", "b"])
+    screen.run()
+    saved = list(frames_dir.glob("bead-mask_*.png"))
+    assert len(saved) == 1
+    assert saved[0].stat().st_size > 0
+    assert "mask figure saved to" in capsys.readouterr().out
+
+
+def test_view_mask_reports_a_bad_frame(records, frames_dir, capsys):
+    (frames_dir / "medida_001_1mW.tif").write_bytes(b"not a tiff")
+    screen = make_screen(records, frames_dir, ["v", "b"])
+    screen.run()
+    assert "✗" in capsys.readouterr().out
+    assert not list(frames_dir.glob("bead-mask_*.png"))

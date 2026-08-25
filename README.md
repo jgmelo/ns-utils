@@ -171,9 +171,17 @@ No TUI, `[i]` abre uma **tela própria** onde se preenche tudo antes de rodar:
   [f] signal frame        [r] reference frame
   [l] line rate           [n] resolution
   [y] flyback fraction    [w] flyback in the frame: NO
-  [g] run the report      [o] save last report
-  [c] clear reference     [b] back to the main menu
+  [g] run the report      [v] view the bead mask
+  [o] save last report    [c] clear reference
+  [b] back to the main menu
 ```
+
+`[v]` abre a figura da máscara de beads: o quadro com os pixels rejeitados
+pintados por cima, a fração rejeitada por coluna alinhada ao eixo x da imagem
+(um pico fica embaixo da conta que o causou), e o histograma de valores com a
+mediana e o corte. O laudo diz *quanto* foi rejeitado; a figura diz *onde*, e se
+o corte está num lugar razoável. Janela bloqueante, com o mesmo fallback do
+gráfico de séries: sem GUI, salva um PNG e informa o caminho.
 
 A linha `timing:` recalcula a cada mudança, **antes** de rodar qualquer coisa:
 um line rate errado aparece como um Nyquist errado, não como uma resposta
@@ -291,7 +299,8 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `state.py` | `AppState` + regra de invalidação. |
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
 | `ui/interference_screen.py` | segunda tela: metadados de aquisição e execução do laudo. |
-| `interference/` | caracterização de padrão fixo: quadro único, laudo de texto, sem gráfico. |
+| `interference/` | caracterização de padrão fixo: quadro único, laudo de texto. |
+| `interference/figures.py` | figuras da caracterização (máscara de beads); constrói, nunca exibe. |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
 
@@ -376,7 +385,7 @@ geometria 2-D da região precisaria de mais que isso.
 python -m pytest
 ```
 
-264 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+268 testes cobrindo parsing de nomes, duplicatas, política multi-página,
 contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
 cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
 config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas
