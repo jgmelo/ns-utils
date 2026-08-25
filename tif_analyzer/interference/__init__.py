@@ -16,12 +16,20 @@ there — analysing the wrong axis yields perfectly plausible, wrong numbers.
 
 from __future__ import annotations
 
-from .analyzer import InterferenceResult, characterise, characterise_arrays
+from .analyzer import (
+    ChannelAnalysis,
+    InterferenceResult,
+    analyse_channel,
+    characterise,
+    characterise_arrays,
+)
 from .params import Acquisition, InterferenceParams
 from .report import render_report
 
 __all__ = [
     "Acquisition",
+    "ChannelAnalysis",
+    "analyse_channel",
     "InterferenceParams",
     "InterferenceResult",
     "characterise",

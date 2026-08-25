@@ -14,8 +14,8 @@ from pathlib import Path
 
 from .. import acquisition_sidecar, loading, plotting
 from ..discovery import FileRecord
-from ..interference import characterise, render_report
-from ..interference.figures import build_mask_figure
+from ..interference import analyse_channel, characterise, render_report
+from ..interference.figures import build_mask_figure, build_profile_figure
 from ..interference.frames import FrameError, load_frame
 from ..interference.mask import build_mask
 from ..interference.params import Acquisition, AcquisitionError, InterferenceParams
@@ -141,6 +141,7 @@ class InterferenceScreen:
             blocked["g"] = "pick a signal frame first"
         if self.settings.signal is None:
             blocked["v"] = "pick a signal frame first"
+            blocked["p"] = "pick a signal frame first"
         if self.last_report is None:
             blocked["o"] = "run the report first"
         if self.settings.reference is None:
@@ -209,6 +210,7 @@ class InterferenceScreen:
             ),
             (entry("k", "bead cut (k sigmas)"), ("")),
             (entry("g", "run the report"), entry("v", "view the bead mask")),
+            (entry("p", "view profile & spectrum"), ("")),
             (entry("o", "save last report"), entry("c", "clear reference")),
             ("[b] back to the main menu", ""),
         ]
@@ -339,6 +341,34 @@ class InterferenceScreen:
         print(self.last_report)
         render.pause(self.read_key)
 
+    def _load_signal(self):
+        """Read the signal frame, reporting rather than raising."""
+        if self.settings.signal is None:
+            return None
+        try:
+            return load_frame(self.settings.signal.path, self.page_policy)
+        except (loading.LoadError, FrameError) as exc:
+            self.messages.append(f"  ✗ {exc}")
+            return None
+
+    def _analyse_signal(self):
+        """Mask, profile and spectrum for the signal frame alone."""
+        frame = self._load_signal()
+        if frame is None:
+            return None
+        flyback = self.settings.acquisition().flyback_columns(frame.n_columns)
+        return analyse_channel(frame, flyback, self.settings.params())
+
+    def _present(self, figure, name: str) -> None:
+        """Blocking window, or a PNG when the backend cannot open one."""
+        outcome = plotting.show_or_save_figure(
+            figure, default_path=plotting.writable_path(name, self.directory)
+        )
+        if outcome.saved_to is not None:
+            self.messages.append(
+                f"  ✓ figure saved to {outcome.saved_to}  ({outcome.backend.name} backend)"
+            )
+
     def action_view_mask(self) -> None:
         """Show where the bead mask actually landed.
 
@@ -346,27 +376,28 @@ class InterferenceScreen:
         this shows where those rejections are, and where the cut sits in the
         value distribution — the two things a number cannot convey.
         """
-        if self.settings.signal is None:
+        frame = self._load_signal()
+        if frame is None:
             return
-        try:
-            frame = load_frame(self.settings.signal.path, self.page_policy)
-        except (loading.LoadError, FrameError) as exc:
-            self.messages.append(f"  ✗ {exc}")
-            return
-
         params = self.settings.params()
         mask_result = build_mask(frame.data, params)
-        figure = build_mask_figure(frame, mask_result, params)
-        default = plotting.writable_path(
-            f"bead-mask_{self.settings.signal.path.stem}.png", self.directory
+        self._present(
+            build_mask_figure(frame, mask_result, params),
+            f"bead-mask_{self.settings.signal.path.stem}.png",
         )
-        outcome = plotting.show_or_save_figure(figure, default_path=default)
-        if outcome.saved_to is not None:
-            self.messages.append(
-                f"  ✓ mask figure saved to {outcome.saved_to}  ({outcome.backend.name} backend)"
-            )
         if not mask_result.reliable and mask_result.reason:
             self.messages.append(f"  ! {mask_result.reason}")
+
+    def action_view_profile(self) -> None:
+        """The profile beside its spectrum, plus the dominant component drawn
+        over a few periods of it."""
+        analysis = self._analyse_signal()
+        if analysis is None:
+            return
+        figure = build_profile_figure(analysis, self.settings.params())
+        self._present(figure, f"profile_{self.settings.signal.path.stem}.png")
+        if not analysis.spectrum.detected and analysis.spectrum.reason:
+            self.messages.append(f"  ! {analysis.spectrum.reason}")
 
     def action_save_report(self) -> None:
         if self.last_report is None:
@@ -400,6 +431,7 @@ class InterferenceScreen:
             "w": self.action_toggle_includes_flyback,
             "g": self.action_run,
             "v": self.action_view_mask,
+            "p": self.action_view_profile,
             "o": self.action_save_report,
         }
         action = actions.get(key)

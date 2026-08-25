@@ -53,9 +53,15 @@ class InterferenceResult:
     timestamp: str
 
 
-def _analyse_channel(
-    frame: Frame, flyback_columns: int, params: InterferenceParams
+def analyse_channel(
+    frame: Frame, flyback_columns: int = 0, params: InterferenceParams | None = None
 ) -> ChannelAnalysis:
+    """Mask, profile and spectrum for one frame on its own.
+
+    Public because the figures need exactly this much and nothing more: a
+    cross-channel comparison is not required to look at one channel's profile.
+    """
+    params = params or InterferenceParams()
     mask_result = mask_mod.build_mask(frame.data, params)
     profile_result = profile_mod.build_profile(frame.data, mask_result, flyback_columns, params)
     spectrum_result = spectrum_mod.analyse(profile_result.analysis_profile, params)
@@ -107,9 +113,11 @@ def _characterise(
     flyback_columns = acquisition.flyback_columns(signal_frame.n_columns)
 
     axis = profile_mod.axis_check(signal_frame.data, params)
-    signal_analysis = _analyse_channel(signal_frame, flyback_columns, params)
+    signal_analysis = analyse_channel(signal_frame, flyback_columns, params)
     reference_analysis = (
-        None if reference_frame is None else _analyse_channel(reference_frame, flyback_columns, params)
+        None
+        if reference_frame is None
+        else analyse_channel(reference_frame, flyback_columns, params)
     )
 
     physical_result = (

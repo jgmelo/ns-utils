@@ -290,7 +290,7 @@ def test_view_mask_saves_a_png_when_headless(records, frames_dir, capsys):
     saved = list(frames_dir.glob("bead-mask_*.png"))
     assert len(saved) == 1
     assert saved[0].stat().st_size > 0
-    assert "mask figure saved to" in capsys.readouterr().out
+    assert "figure saved to" in capsys.readouterr().out
 
 
 def test_view_mask_reports_a_bad_frame(records, frames_dir, capsys):
@@ -353,3 +353,92 @@ def test_the_report_names_the_cut_that_was_used(records, frames_dir, monkeypatch
     screen.settings.mad_k = 5.0
     screen.run()
     assert "median + 5 sigma" in (screen.last_report or "")
+
+
+# -- profile & spectrum figure ----------------------------------------------- #
+
+
+def test_profile_figure_has_profile_spectrum_and_zoom(frames_dir):
+    from tif_analyzer.interference import analyse_channel
+    from tif_analyzer.interference.figures import build_profile_figure
+    from tif_analyzer.interference.frames import load_frame
+
+    analysis = analyse_channel(load_frame(frames_dir / "medida_001_1mW.tif"))
+    figure = build_profile_figure(analysis)
+    profile_axes, spectrum_axes, zoom_axes = figure.axes[:3]
+
+    assert profile_axes.get_title(loc="left").startswith("medida_001_1mW.tif")
+    assert "column" in profile_axes.get_xlabel()
+    assert spectrum_axes.get_xlabel() == "cycles per pixel"
+    assert spectrum_axes.get_yscale() == "log"
+    assert "DETECTED" in spectrum_axes.get_title(loc="left")
+    assert zoom_axes.get_ylabel() == "counts"
+
+
+def test_the_drawn_component_matches_the_planted_amplitude(tmp_path):
+    """The zoom fits a sinusoid by projection rather than inverting the cluster
+    bins — leakage would otherwise draw a component smaller than the profile."""
+    import tifffile
+    from tif_analyzer.interference import analyse_channel
+    from tif_analyzer.interference.figures import build_profile_figure
+    from tif_analyzer.interference.frames import load_frame
+    from tif_analyzer.interference.synthetic import FrameSpec, make_frame
+
+    # A period that is deliberately not a whole number of bins.
+    array, truth = make_frame(
+        FrameSpec(shape=(64, 512), period_px=13.7, amplitude=45.0, noise_sigma=3.0)
+    )
+    path = tmp_path / "frame.tif"
+    tifffile.imwrite(path, array)
+    figure = build_profile_figure(analyse_channel(load_frame(path)))
+
+    labels = [text.get_text() for text in figure.axes[2].get_legend().get_texts()]
+    drawn = [label for label in labels if "single component" in label]
+    assert drawn, labels
+    amplitude = float(drawn[0].split("amplitude ")[1].split(" ")[0])
+    assert amplitude == pytest.approx(truth.amplitude, rel=0.05)
+
+
+def test_profile_figure_survives_a_frame_with_no_component(tmp_path):
+    import tifffile
+    from tif_analyzer.interference import analyse_channel
+    from tif_analyzer.interference.figures import build_profile_figure
+    from tif_analyzer.interference.frames import load_frame
+    from tif_analyzer.interference.synthetic import FrameSpec, make_frame
+
+    array, _ = make_frame(FrameSpec(shape=(64, 512), amplitude=0.0, noise_sigma=20.0))
+    path = tmp_path / "noise.tif"
+    tifffile.imwrite(path, array)
+    analysis = analyse_channel(load_frame(path))
+    assert analysis.spectrum.detected is False
+    figure = build_profile_figure(analysis)
+    assert "NOT DETECTED" in figure.axes[1].get_title(loc="left")
+
+
+def test_view_profile_saves_a_png_when_headless(records, frames_dir, capsys):
+    screen = make_screen(records, frames_dir, ["p", "b"])
+    screen.run()
+    saved = list(frames_dir.glob("profile_*.png"))
+    assert len(saved) == 1
+    assert saved[0].stat().st_size > 0
+    assert "figure saved to" in capsys.readouterr().out
+
+
+def test_view_profile_reports_a_bad_frame(records, frames_dir, capsys):
+    (frames_dir / "medida_001_1mW.tif").write_bytes(b"not a tiff")
+    screen = make_screen(records, frames_dir, ["p", "b"])
+    screen.run()
+    assert "✗" in capsys.readouterr().out
+    assert not list(frames_dir.glob("profile_*.png"))
+
+
+def test_both_figures_use_the_current_bead_cut(records, frames_dir):
+    """The knob has to reach the figures, not just the report."""
+    from tif_analyzer.interference.mask import build_mask
+
+    screen = make_screen(records, frames_dir, "b")
+    screen.settings.mad_k = 9.0
+    analysis = screen._analyse_signal()
+    frame = screen._load_signal()
+    assert analysis.mask.threshold == build_mask(frame.data, screen.settings.params()).threshold
+    assert analysis.mask.threshold > build_mask(frame.data).threshold

@@ -174,6 +174,7 @@ No TUI, `[i]` abre uma **tela própria** onde se preenche tudo antes de rodar:
   [y] flyback fraction    [w] flyback in the frame: NO
   [k] bead cut (k sigmas)
   [g] run the report      [v] view the bead mask
+  [p] view profile & spectrum
   [o] save last report    [c] clear reference
   [b] back to the main menu
 ```
@@ -190,6 +191,14 @@ pintados por cima, a fração rejeitada por coluna alinhada ao eixo x da imagem
 mediana e o corte. O laudo diz *quanto* foi rejeitado; a figura diz *onde*, e se
 o corte está num lugar razoável. Janela bloqueante, com o mesmo fallback do
 gráfico de séries: sem GUI, salva um PNG e informa o caminho.
+
+`[p]` abre o perfil ao lado do espectro: à esquerda a mediana por coluna que a
+FFT leu, com a versão crua atrás (a diferença entre as duas é a contaminação por
+beads que o laudo quantifica); à direita o espectro de potência com o cluster
+sombreado, o limiar de detecção desenhado e um eixo de período no topo; embaixo,
+alguns períodos com a componente dominante sobreposta, ajustada por projeção na
+frequência do centroide. O desvio residual dessa sobreposição diz se **uma**
+componente descreve o perfil ou se falta coisa.
 
 A linha `timing:` recalcula a cada mudança, **antes** de rodar qualquer coisa:
 um line rate errado aparece como um Nyquist errado, não como uma resposta
@@ -308,7 +317,7 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
 | `ui/interference_screen.py` | segunda tela: metadados de aquisição e execução do laudo. |
 | `interference/` | caracterização de padrão fixo: quadro único, laudo de texto. |
-| `interference/figures.py` | figuras da caracterização (máscara de beads); constrói, nunca exibe. |
+| `interference/figures.py` | figuras da caracterização (máscara, perfil + espectro); constrói, nunca exibe. |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
 
@@ -393,7 +402,7 @@ geometria 2-D da região precisaria de mais que isso.
 python -m pytest
 ```
 
-274 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+280 testes cobrindo parsing de nomes, duplicatas, política multi-página,
 contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
 cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
 config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas

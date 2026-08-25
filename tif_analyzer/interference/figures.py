@@ -23,6 +23,7 @@ from ..plotting import (
     display_limits,
     display_norm,
 )
+from .dsp import goertzel, window
 from .frames import Frame
 from .mask import MaskResult
 from .params import InterferenceParams
@@ -212,3 +213,189 @@ def build_mask_figure(
         )
     return figure
 
+
+
+def build_profile_figure(
+    analysis,
+    params: InterferenceParams | None = None,
+):
+    """The fixed-pattern profile beside its spectrum, plus a zoom.
+
+    Left: the profile the FFT actually read, with the raw one behind it — the
+    gap between them is the bead contamination the report quantifies.
+    Right: the power spectrum, with the cluster shaded and the detection
+    threshold drawn, so "detected" is a thing you can see rather than trust.
+    Bottom: a few periods, with the cluster's own reconstruction on top, which
+    is what says whether one component really describes this profile.
+    """
+    import matplotlib.pyplot as plt
+
+    params = params or InterferenceParams()
+    profile = analysis.profile
+    spectrum = analysis.spectrum
+    values = profile.analysis_profile
+    columns = np.arange(values.size)
+
+    figure = plt.figure(figsize=(12.0, 7.0), layout="constrained")
+    grid = figure.add_gridspec(2, 2, width_ratios=[2.0, 1.0], height_ratios=[1.0, 0.85])
+    profile_axes = figure.add_subplot(grid[0, 0])
+    spectrum_axes = figure.add_subplot(grid[0, 1])
+    zoom_axes = figure.add_subplot(grid[1, :])
+
+    # -- the profile -----------------------------------------------------------
+    if profile.masked_values is not None:
+        profile_axes.plot(
+            columns,
+            profile.values,
+            color=TEXT_MUTED,
+            linewidth=0.8,
+            alpha=0.7,
+            zorder=2,
+            label=f"raw column median (std {profile.std:.4g})",
+        )
+        label = f"bead-masked (std {profile.masked_std:.4g})"
+    else:
+        label = f"column median (std {profile.std:.4g})"
+    profile_axes.plot(columns, values, color=KEEP_COLOR, linewidth=1.1, zorder=3, label=label)
+    profile_axes.set_ylabel("counts, mean-centred", color=TEXT_PRIMARY, fontsize=9)
+    profile_axes.set_xlabel("column (time within the scan line)", color=TEXT_PRIMARY, fontsize=9)
+    profile_axes.set_xlim(0, max(1, values.size - 1))
+    profile_axes.set_title(
+        f"{analysis.frame.name} — fixed-pattern profile",
+        loc="left",
+        fontsize=12,
+        color=TEXT_PRIMARY,
+        pad=14,
+    )
+    if profile.flyback_columns_dropped:
+        profile_axes.annotate(
+            f"{profile.flyback_columns_dropped} flyback column(s) dropped",
+            xy=(0.0, 1.02),
+            xycoords="axes fraction",
+            fontsize=8,
+            color=TEXT_MUTED,
+            annotation_clip=False,
+        )
+    profile_axes.legend(fontsize=7, loc="upper right", framealpha=0.9)
+    _style_axes(profile_axes)
+
+    # -- the spectrum ----------------------------------------------------------
+    frequencies = spectrum.frequencies
+    power = spectrum.power
+    low = max(1, params.exclude_low_bins)
+    spectrum_axes.plot(
+        frequencies[low:], power[low:], color=KEEP_COLOR, linewidth=1.0, zorder=3
+    )
+    if low > 1:
+        spectrum_axes.axvspan(
+            frequencies[1], frequencies[low], color=TEXT_MUTED, alpha=0.12, zorder=1,
+            label=f"not searched ({low} low bins)",
+        )
+    band_low, band_high = spectrum.cluster_frequency_range
+    spectrum_axes.axvspan(
+        band_low, band_high, color=REJECT_COLOR, alpha=0.22, zorder=2,
+        label=f"cluster, {spectrum.power_fraction:.0%} of the power",
+    )
+    spectrum_axes.axvline(
+        spectrum.centroid_frequency,
+        color=REJECT_COLOR,
+        linewidth=1.4,
+        zorder=4,
+        label=f"centroid {spectrum.centroid_frequency:.5f} c/px  ({spectrum.period_px:.2f} px)",
+    )
+    if spectrum.noise_floor > 0:
+        spectrum_axes.axhline(
+            spectrum.noise_floor * spectrum.required_ratio,
+            color=TEXT_PRIMARY,
+            linestyle="--",
+            linewidth=1.0,
+            zorder=4,
+            label=f"detection needs {spectrum.required_ratio:.0f}x the floor",
+        )
+        spectrum_axes.axhline(
+            spectrum.noise_floor, color=TEXT_MUTED, linestyle=":", linewidth=1.0, zorder=4,
+            label="noise floor (median)",
+        )
+    spectrum_axes.set_yscale("log")
+    # From the first non-DC bin: the period axis on top is 1/f, and including
+    # zero would ask it to label an infinite period.
+    spectrum_axes.set_xlim(float(frequencies[1]), 0.5)
+    spectrum_axes.set_xlabel("cycles per pixel", color=TEXT_PRIMARY, fontsize=9)
+    spectrum_axes.set_ylabel("power", color=TEXT_PRIMARY, fontsize=9)
+    spectrum_axes.set_title(
+        "spectrum — " + ("DETECTED" if spectrum.detected else "NOT DETECTED"),
+        loc="left",
+        fontsize=10,
+        color=TEXT_PRIMARY if spectrum.detected else REJECT_COLOR,
+        pad=14,
+    )
+    period_axis = spectrum_axes.secondary_xaxis(
+        "top", functions=(_safe_reciprocal, _safe_reciprocal)
+    )
+    # Explicit ticks, chosen to be spread along the *frequency* axis: 1/f
+    # bunches long periods against the left edge, and the default locator turns
+    # the period axis into an unreadable smear there.
+    periods = [
+        p
+        for p in (2, 3, 4, 6, 10, 20, 40)
+        if 0.02 <= 1.0 / p <= 0.5 and p <= values.size / 4
+    ]
+    period_axis.set_xticks(periods)
+    period_axis.set_xticklabels([str(p) for p in periods])
+    period_axis.set_xlabel("period (px)", color=TEXT_MUTED, fontsize=8)
+    period_axis.tick_params(colors=TEXT_MUTED, labelsize=7)
+    spectrum_axes.legend(fontsize=6.5, loc="upper right", framealpha=0.9)
+    _style_axes(spectrum_axes)
+
+    # -- a few periods, with the cluster's reconstruction -----------------------
+    if spectrum.detected and np.isfinite(spectrum.period_px):
+        span = int(min(values.size, max(40, round(6 * spectrum.period_px))))
+    else:
+        span = int(min(values.size, 120))
+    # A single sinusoid at the centroid, fitted by projection — not an inverse
+    # transform of the cluster bins. The cluster was found in the *windowed*
+    # spectrum, and a real period is never exactly on a bin, so inverting those
+    # bins on the unwindowed profile loses amplitude to leakage and draws a
+    # component visibly smaller than the profile it is supposed to explain.
+    reconstruction = np.zeros_like(values)
+    amplitude = float("nan")
+    if spectrum.detected and spectrum.centroid_frequency > 0:
+        weights = window(params.window, values.size)
+        projection = goertzel(values - values.mean(), spectrum.centroid_frequency, weights)
+        amplitude = 2.0 * abs(projection) / float(np.sum(weights))
+        phase = float(np.angle(projection))
+        reconstruction = amplitude * np.cos(
+            2.0 * np.pi * spectrum.centroid_frequency * columns + phase
+        )
+    zoom_axes.plot(
+        columns[:span], values[:span], color=KEEP_COLOR, linewidth=1.2, marker="o",
+        markersize=3, zorder=3, label="profile",
+    )
+    zoom_axes.plot(
+        columns[:span], reconstruction[:span], color=REJECT_COLOR, linewidth=1.8, zorder=4,
+        label=f"single component at the centroid (amplitude {amplitude:.4g} counts)",
+    )
+    residual = float(np.std(values - reconstruction))
+    headroom = float(np.max(np.abs(values[:span]))) * 1.55
+    zoom_axes.set_ylim(-headroom / 1.35, headroom)
+    zoom_axes.set_xlabel(
+        f"column — first {span} of {values.size}", color=TEXT_PRIMARY, fontsize=9
+    )
+    zoom_axes.set_ylabel("counts", color=TEXT_PRIMARY, fontsize=9)
+    zoom_axes.set_title(
+        f"the dominant component against the profile   ·   residual std {residual:.4g} counts",
+        loc="left",
+        fontsize=9,
+        color=TEXT_MUTED,
+        pad=8,
+    )
+    zoom_axes.legend(fontsize=7, loc="upper right", framealpha=0.9)
+    _style_axes(zoom_axes)
+    return figure
+
+
+def _safe_reciprocal(values):
+    """1/x for the period axis, kept finite so the axis can always be scaled."""
+    values = np.asarray(values, dtype=np.float64)
+    safe = np.where(np.abs(values) < 1e-12, 1e-12, values)
+    return 1.0 / safe
