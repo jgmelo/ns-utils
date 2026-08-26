@@ -174,7 +174,7 @@ No TUI, `[i]` abre uma **tela própria** onde se preenche tudo antes de rodar:
   [y] flyback fraction    [w] flyback in the frame: NO
   [k] bead cut (k sigmas)
   [g] run the report      [v] view the bead mask
-  [p] view profile & spectrum
+  [p] view profile & spectrum   [s] subtract the pattern
   [o] save last report    [c] clear reference
   [b] back to the main menu
 ```
@@ -270,6 +270,55 @@ deriva de fase por linha que produziria, o que às vezes escolhe um deles — ma
 previsão é sensível ao centroide, e quando a incerteza passa de meia volta o
 laudo declara que **não dá para separar** em vez de apontar um vencedor.
 
+### Subtração do padrão (`[s]`)
+
+Terceira tela, alcançada de `[i]`. Assume que a subtração é viável — não
+re-discute o veredito — mas sempre mostra o que a correção fez antes de você
+guardar o arquivo. **Nada é escrito até `[w]`.**
+
+```
+  mode:        profile — signal minus its own column median (no reference)
+
+  computed:
+    period 16.000 px
+    stripe      39.35 →   0.7129 counts   (98.2% removed)
+    noise       2.965 →    2.965 counts   (+0.0%)
+```
+
+Dois modos:
+
+| modo | conta | quando |
+|---|---|---|
+| `reference` | `S − α·R_alinhado` | referência simultânea disponível |
+| `profile` | `S − perfil(x)` | padrão travado na linha; não gasta canal |
+
+No modo `reference`: a referência é alinhada por deslocamento sub-pixel de
+Fourier, escalada por **mínimos quadrados sobre os pixels de fundo** (beads
+excluídos, senão um grão brilhante puxa α e a subtração come sinal real), e por
+padrão **restrita à banda da listra** — subtrair a referência crua cancela a
+listra e injeta o ruído de banda larga dela no lugar. `[e]` ajusta α linha a
+linha em vez de uma vez para o quadro.
+
+As duas linhas de `computed:` são o que decide se vale a pena: quanto de listra
+saiu **e** quanto de ruído entrou. Uma correção que tira 90% da listra e dobra o
+ruído não é ganho. Se a listra *aumentar*, um aviso alto aparece — não é veredito
+de viabilidade, é conferência de aritmética.
+
+Números típicos de um quadro sintético com listra de 40 contagens e referência
+ruidosa, para calibrar expectativa:
+
+| configuração | listra removida | ruído |
+|---|---|---|
+| perfil | 98% | +0% |
+| referência, em banda | 89% | +84% |
+| referência, crua | 32% | +360% |
+
+A saída é **float32**: os valores corrigidos são fracionários (α é), e uint16
+arredondaria cada pixel, jogando fora parte da distribuição de ruído que a
+medida de SNR vai justamente medir. O nível de fundo original é preservado. Os
+parâmetros vão para a descrição do TIFF **e** um sidecar
+`<nome>.subtraction.json` — imagem corrigida sem registro de como é armadilha.
+
 ### Dados de exemplo
 
 ```bash
@@ -316,8 +365,11 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `state.py` | `AppState` + regra de invalidação. |
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
 | `ui/interference_screen.py` | segunda tela: metadados de aquisição e execução do laudo. |
+| `ui/subtraction_screen.py` | terceira tela: calcula, mostra e grava a subtração. |
 | `interference/` | caracterização de padrão fixo: quadro único, laudo de texto. |
-| `interference/figures.py` | figuras da caracterização (máscara, perfil + espectro); constrói, nunca exibe. |
+| `interference/figures.py` | figuras da caracterização (máscara, perfil + espectro, antes/depois). |
+| `interference/subtract.py` | alinhamento, escala, subtração e as medidas de antes/depois. |
+| `interference/writing.py` | grava o quadro corrigido em float32 com procedência. |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
 
@@ -402,7 +454,7 @@ geometria 2-D da região precisaria de mais que isso.
 python -m pytest
 ```
 
-280 testes cobrindo parsing de nomes, duplicatas, política multi-página,
+319 testes cobrindo parsing de nomes, duplicatas, política multi-página,
 contrato das métricas, geometria e máscaras das áreas, hash e invalidação de
 cache, sidecar corrompido ou com dimensão errada, máquina de estados da seleção,
 config corrompida, CSV, fallback headless do gráfico e o loop de menu com teclas

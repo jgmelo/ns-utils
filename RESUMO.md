@@ -66,7 +66,22 @@ espectro → Hz e alias → fase por linha → comparação entre canais → ver
 **Limiares provisórios** (2% de período, 0,80 de correlação em banda, 0,30 de
 lacuna, k = 3): escolhidos por princípio, **não calibrados**. Todo laudo diz isso.
 
-## 3. Figuras
+## 3. Subtração do padrão (`[s]`)
+
+`reference`: `S − α·R_alinhado`, com alinhamento sub-pixel por Fourier, α por
+mínimos quadrados sobre pixels de fundo, e a referência restrita à banda da
+listra (crua injeta o ruído de banda larga dela). `profile`: `S − perfil(x)`,
+sem referência, só funciona se o padrão estiver travado na linha.
+
+Sempre reporta **listra removida e ruído injetado** — uma correção que tira 90%
+da listra e dobra o ruído não é ganho. Saída float32 com procedência no TIFF e
+num sidecar; nível de fundo original preservado.
+
+Sinal do deslocamento: a referência anda o **oposto** do offset medido. Errar o
+sinal deixa a listra intacta e produz um α plausível — por isso vive numa função
+só, `alignment_shift`, com teste.
+
+## 4. Figuras
 
 - `[v]` **máscara**: quadro com rejeitados pintados, fração por coluna alinhada
   ao eixo da imagem, histograma com mediana e corte.

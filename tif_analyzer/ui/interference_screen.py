@@ -21,6 +21,7 @@ from ..interference.mask import build_mask
 from ..interference.params import Acquisition, AcquisitionError, InterferenceParams
 from . import prompts, render
 from .prompts import CLEARED
+from .subtraction_screen import SubtractionScreen
 
 
 @dataclass
@@ -142,6 +143,7 @@ class InterferenceScreen:
         if self.settings.signal is None:
             blocked["v"] = "pick a signal frame first"
             blocked["p"] = "pick a signal frame first"
+            blocked["s"] = "pick a signal frame first"
         if self.last_report is None:
             blocked["o"] = "run the report first"
         if self.settings.reference is None:
@@ -210,7 +212,7 @@ class InterferenceScreen:
             ),
             (entry("k", "bead cut (k sigmas)"), ("")),
             (entry("g", "run the report"), entry("v", "view the bead mask")),
-            (entry("p", "view profile & spectrum"), ("")),
+            (entry("p", "view profile & spectrum"), entry("s", "subtract the pattern")),
             (entry("o", "save last report"), entry("c", "clear reference")),
             ("[b] back to the main menu", ""),
         ]
@@ -399,6 +401,20 @@ class InterferenceScreen:
         if not analysis.spectrum.detected and analysis.spectrum.reason:
             self.messages.append(f"  ! {analysis.spectrum.reason}")
 
+    def action_subtract(self) -> None:
+        """Open the subtraction screen with the frames and settings chosen here."""
+        if self.settings.signal is None:
+            return
+        screen = SubtractionScreen(
+            self.settings,
+            self.directory,
+            self.read_key,
+            page_policy=self.page_policy,
+            clear=self.clear,
+        )
+        screen.run()
+        self.messages.extend(screen.messages)
+
     def action_save_report(self) -> None:
         if self.last_report is None:
             return
@@ -432,6 +448,7 @@ class InterferenceScreen:
             "g": self.action_run,
             "v": self.action_view_mask,
             "p": self.action_view_profile,
+            "s": self.action_subtract,
             "o": self.action_save_report,
         }
         action = actions.get(key)

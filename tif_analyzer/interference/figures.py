@@ -399,3 +399,83 @@ def _safe_reciprocal(values):
     values = np.asarray(values, dtype=np.float64)
     safe = np.where(np.abs(values) < 1e-12, 1e-12, values)
     return 1.0 / safe
+
+
+def build_subtraction_figure(
+    before,
+    after,
+    result,
+    params: InterferenceParams | None = None,
+):
+    """Before and after, on the two views that matter.
+
+    Left: the fixed-pattern profiles, on the same scale — the flattening is the
+    whole point, and putting them on separate axes would hide it.
+    Right: the spectra, with the stripe frequency marked, showing whether the
+    component went away or merely moved.
+    """
+    import matplotlib.pyplot as plt
+
+    params = params or InterferenceParams()
+    figure = plt.figure(figsize=(12.0, 5.6), layout="constrained")
+    grid = figure.add_gridspec(1, 2, width_ratios=[1.6, 1.0])
+    profile_axes = figure.add_subplot(grid[0, 0])
+    spectrum_axes = figure.add_subplot(grid[0, 1])
+
+    before_profile = before.profile.analysis_profile
+    after_profile = after.profile.analysis_profile
+    columns = np.arange(before_profile.size)
+
+    profile_axes.plot(
+        columns, before_profile, color=TEXT_MUTED, linewidth=0.9, zorder=2,
+        label=f"before (stripe {result.stripe_before:.4g} counts)",
+    )
+    profile_axes.plot(
+        columns, after_profile, color=KEEP_COLOR, linewidth=1.1, zorder=3,
+        label=f"after (stripe {result.stripe_after:.4g} counts)",
+    )
+    profile_axes.set_xlim(0, max(1, before_profile.size - 1))
+    profile_axes.set_xlabel("column (time within the scan line)", color=TEXT_PRIMARY, fontsize=9)
+    profile_axes.set_ylabel("counts, mean-centred", color=TEXT_PRIMARY, fontsize=9)
+    label = (
+        "profile subtraction (no reference used)"
+        if result.mode == "profile"
+        else f"reference x {result.scale:.4g}, shifted {result.shift_px:+.3f} px"
+        + (", band-limited" if result.band_limited else ", raw")
+        + (", per line" if result.per_line else "")
+    )
+    profile_axes.set_title(
+        f"{before.frame.name} — {result.removed_fraction:.1%} of the stripe removed",
+        loc="left", fontsize=12, color=TEXT_PRIMARY, pad=16,
+    )
+    profile_axes.annotate(
+        f"{label}   ·   background noise {result.sigma_before:.4g} → {result.sigma_after:.4g} "
+        f"counts ({result.noise_change:+.1%})",
+        xy=(0.0, 1.015), xycoords="axes fraction", fontsize=8, color=TEXT_MUTED,
+        annotation_clip=False,
+    )
+    profile_axes.legend(fontsize=7, loc="upper right", framealpha=0.9)
+    _style_axes(profile_axes)
+
+    low = max(1, params.exclude_low_bins)
+    spectrum_axes.plot(
+        before.spectrum.frequencies[low:], before.spectrum.power[low:],
+        color=TEXT_MUTED, linewidth=0.9, zorder=2, label="before",
+    )
+    spectrum_axes.plot(
+        after.spectrum.frequencies[low:], after.spectrum.power[low:],
+        color=KEEP_COLOR, linewidth=0.9, zorder=3, label="after",
+    )
+    if result.frequency > 0:
+        spectrum_axes.axvline(
+            result.frequency, color=REJECT_COLOR, linewidth=1.4, zorder=4,
+            label=f"{result.frequency:.5f} c/px ({1.0 / result.frequency:.2f} px)",
+        )
+    spectrum_axes.set_yscale("log")
+    spectrum_axes.set_xlim(float(before.spectrum.frequencies[1]), 0.5)
+    spectrum_axes.set_xlabel("cycles per pixel", color=TEXT_PRIMARY, fontsize=9)
+    spectrum_axes.set_ylabel("power", color=TEXT_PRIMARY, fontsize=9)
+    spectrum_axes.set_title("spectrum, before and after", loc="left", fontsize=10, color=TEXT_PRIMARY, pad=10)
+    spectrum_axes.legend(fontsize=7, loc="upper right", framealpha=0.9)
+    _style_axes(spectrum_axes)
+    return figure

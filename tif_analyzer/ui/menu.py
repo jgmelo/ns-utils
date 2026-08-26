@@ -112,7 +112,7 @@ class MenuApp:
         elif not self.state.regions_ready:
             blocked["r"] = f"metric {self.state.metric_key} needs the areas — press [a]"
 
-        if not self.state.has_records:
+        if not self.inspectable_records():
             blocked["i"] = "no matching files to inspect"
 
         can_select, reason = selection.can_select()
@@ -272,15 +272,32 @@ class MenuApp:
         self.discovery_error = None
         self._persist()
 
+    def inspectable_records(self) -> list:
+        """Files the single-frame tools may open.
+
+        Deliberately *not* ``state.records``: duplicate parameter values null
+        that out, and a signal/reference pair is the commonest duplicate there
+        is — the same measurement recorded on two channels carries the same
+        power in both filenames. The duplicate rule protects a series plot from
+        collapsing two points into one; it has nothing to say about opening one
+        frame and looking at it.
+        """
+        if self.state.records:
+            return self.state.records
+        if self.state.discovery is not None:
+            return self.state.discovery.records
+        return []
+
     def action_interference(self) -> None:
         """Open the interference screen: pick frames, fill in the acquisition,
         run the report there. It keeps its own state — none of it belongs to the
         series pipeline, so none of it may invalidate it."""
-        if not self.state.records:
+        records = self.inspectable_records()
+        if not records:
             return
         if self.interference_screen is None or self.interference_screen.directory != self.state.directory:
             self.interference_screen = InterferenceScreen(
-                self.state.records,
+                records,
                 self.state.directory,
                 self.reader.read,
                 page_policy=self.state.page_policy,
@@ -289,7 +306,7 @@ class MenuApp:
             )
         else:
             # Same directory, possibly a new glob or pattern: refresh the list.
-            self.interference_screen.records = self.state.records
+            self.interference_screen.records = records
         self.interference_screen.run()
 
     def action_run(self) -> None:
