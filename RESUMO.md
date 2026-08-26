@@ -1,6 +1,6 @@
 # Resumo — ns-utils
 
-Duas ferramentas, um pacote Python 3.10+, 280 testes.
+Duas ferramentas, um pacote Python 3.10+, 319 testes.
 
 ## 1. TIF Series Analyzer (`tif-analyzer`)
 
