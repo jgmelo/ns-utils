@@ -177,6 +177,9 @@ def build_figure(
 # held fixed.
 FIT_COLOR = "#B4341C"
 LOCKED_COLORS = ("#6B7280", "#9AA1AC")
+#: Points the parameter cutoff excluded: same shape as the data, hollow, so they
+#: read as measurements that were set aside rather than as another series.
+EXCLUDED_COLOR = "#8A9099"
 
 
 def _curve_x(xs, log_axes: bool):
@@ -227,9 +230,29 @@ def draw_fit_panel(ax, panel, log_axes: bool = True) -> None:
         zorder=4,
     )
 
+    excluded_xs = getattr(panel, "excluded_xs", ())
+    if excluded_xs:
+        # Drawn, not dropped: a cutoff is usually set because the top of the
+        # range bends away from the line, and hiding the bend hides the reason.
+        ax.plot(
+            excluded_xs,
+            panel.excluded_ys,
+            linestyle="none",
+            marker="o",
+            markersize=7,
+            markerfacecolor="none",
+            markeredgecolor=EXCLUDED_COLOR,
+            markeredgewidth=1.4,
+            label="above the cutoff (not fitted)",
+            zorder=4,
+        )
+
     fit = panel.fit
     if fit is not None:
-        curve_x = _curve_x(panel.xs, log_axes)
+        # Spanning the excluded points too, so the curve extrapolates across
+        # them: seeing how far they fall off the line is the point of showing
+        # them at all.
+        curve_x = _curve_x(list(panel.xs) + list(excluded_xs), log_axes)
         ax.plot(
             curve_x,
             fit.predict(curve_x),

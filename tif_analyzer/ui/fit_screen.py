@@ -30,6 +30,10 @@ class FitScreen:
         self.log_axes = True
         self.messages: list[str] = []
         self.param_label = "parameter"
+        #: Upper cutoff on the filename parameter. A session knob like the bead
+        #: cut on the interference screen: tuned while looking at the figure, not
+        #: acquisition metadata, so it is not persisted anywhere.
+        self.max_param: float | None = None
 
     # -- the fit ------------------------------------------------------------ #
 
@@ -42,8 +46,18 @@ class FitScreen:
         if self.state.report is None or not self.state.report.results:
             return None
         return noise_regime.analyse(
-            self.state.report, self.series_key, self.param_label
+            self.state.report,
+            self.series_key,
+            self.param_label,
+            max_param=self.max_param,
         )
+
+    def param_range(self) -> tuple[float, float] | None:
+        """The parameter values present, for the cutoff prompt to show."""
+        if self.state.report is None or not self.state.report.results:
+            return None
+        values = [result.record.param_value for result in self.state.report.results]
+        return min(values), max(values)
 
     # -- screen ------------------------------------------------------------- #
 
@@ -63,6 +77,12 @@ class FitScreen:
 
     def report_lines(self, regime: noise_regime.RegimeReport) -> list[str]:
         lines: list[str] = []
+        if regime.max_param is not None:
+            lines.append(
+                f"  cutoff: {self.param_label} ≤ {regime.max_param:g}"
+                f"   ({regime.n_excluded} file(s) left out)"
+            )
+            lines.append("")
         for panel in (regime.snr, regime.response, regime.noise):
             if panel is None:
                 continue
@@ -114,8 +134,10 @@ class FitScreen:
 
     def menu(self) -> str:
         axes = "log-log" if self.log_axes else "linear"
+        cutoff = "none" if self.max_param is None else f"{self.max_param:g}"
         return (
-            f"\n  [l] axes: {axes}    [v] plot the fits    [o] save this report"
+            f"\n  [x] max {self.param_label}: {cutoff}    [l] axes: {axes}"
+            "\n  [v] plot the fits           [o] save this report"
             "\n  [b] back to the main menu"
         )
 
@@ -123,6 +145,30 @@ class FitScreen:
 
     def action_toggle_axes(self) -> None:
         self.log_axes = not self.log_axes
+
+    def action_max_param(self) -> None:
+        """Set the upper cutoff on the parameter, or clear it with 'none'."""
+        from . import prompts
+
+        span = self.param_range()
+        message = f"Highest {self.param_label} to include in the fits"
+        if span is not None:
+            message += f"   (series runs {span[0]:g} … {span[1]:g})"
+        chosen = prompts.prompt_number(
+            message, self.max_param, kind=float, minimum=0.0, allow_clear=True
+        )
+        if chosen is None:
+            return
+        if chosen is prompts.CLEARED:
+            self.max_param = None
+            self.messages.append("  cutoff cleared — every file is fitted")
+            return
+        self.max_param = float(chosen)
+        if span is not None and self.max_param >= span[1]:
+            self.messages.append(
+                f"  ! {self.max_param:g} is at or above the highest {self.param_label} "
+                f"in the series ({span[1]:g}), so nothing is left out"
+            )
 
     def action_plot(self, regime: noise_regime.RegimeReport | None) -> None:
         if regime is None:
@@ -135,6 +181,8 @@ class FitScreen:
         directory = Path(snapshot.get("directory") or self.state.directory)
         title = directory.name or str(directory)
         subtitle = f"{self.series_key} · power-law fit · {regime.conclusion}"
+        if regime.max_param is not None:
+            subtitle += f" · fitted up to {self.param_label} {regime.max_param:g}"
         figure = plotting.build_fit_figure(
             panels, title, subtitle, log_axes=self.log_axes
         )
@@ -183,6 +231,8 @@ class FitScreen:
                 return
             if key == "l":
                 self.action_toggle_axes()
+            elif key == "x":
+                self.action_max_param()
             elif key == "v":
                 self.action_plot(regime)
             elif key == "o":

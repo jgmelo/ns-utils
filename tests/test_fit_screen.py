@@ -182,3 +182,86 @@ def test_log_axes_are_the_default_and_can_be_turned_off(tmp_path):
 def test_a_figure_with_nothing_fitted_is_refused(tmp_path):
     with pytest.raises(ValueError, match="nothing to plot"):
         plotting.build_fit_figure([], "t", "s")
+
+
+# --------------------------------------------------------------------------- #
+# the parameter cutoff
+# --------------------------------------------------------------------------- #
+
+
+def test_the_cutoff_starts_unset_and_is_shown(tmp_path, capsys):
+    make_screen(tmp_path, "b").run()
+    assert "[x] max power (mW): none" in capsys.readouterr().out
+
+
+def test_setting_the_cutoff_refits_and_says_so(tmp_path, monkeypatch, capsys):
+    from tif_analyzer.ui import prompts
+
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: 20.0)
+    screen = make_screen(tmp_path, ["x", "b"])
+    screen.run()
+    assert screen.max_param == 20.0
+    text = capsys.readouterr().out
+    assert "[x] max power (mW): 20" in text
+    assert "cutoff: power (mW) ≤ 20" in text
+    assert "2 file(s) left out" in text
+
+
+def test_the_cutoff_can_be_cleared(tmp_path, monkeypatch):
+    from tif_analyzer.ui import prompts
+
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: prompts.CLEARED)
+    screen = make_screen(tmp_path, ["x", "b"])
+    screen.max_param = 20.0
+    screen.run()
+    assert screen.max_param is None
+
+
+def test_cancelling_the_prompt_leaves_the_cutoff_alone(tmp_path, monkeypatch):
+    from tif_analyzer.ui import prompts
+
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: None)
+    screen = make_screen(tmp_path, ["x", "b"])
+    screen.max_param = 20.0
+    screen.run()
+    assert screen.max_param == 20.0
+
+
+def test_a_cutoff_above_the_series_warns_that_it_does_nothing(tmp_path, monkeypatch, capsys):
+    from tif_analyzer.ui import prompts
+
+    monkeypatch.setattr(prompts, "prompt_number", lambda *a, **k: 500.0)
+    make_screen(tmp_path, ["x", "b"]).run()
+    assert "so nothing is left out" in capsys.readouterr().out
+
+
+def test_the_prompt_shows_the_range_the_series_covers(tmp_path):
+    screen = make_screen(tmp_path, "b")
+    assert screen.param_range() == (5.0, 80.0)
+
+
+def test_excluded_points_are_drawn_hollow_not_hidden(tmp_path):
+    regime = noise_regime.analyse(
+        snr_report(tmp_path), "snr", "power (mW)", max_param=20.0
+    )
+    figure = plotting.build_fit_figure(regime.panels, "t", "s")
+    labels = [text.get_text() for text in figure.axes[0].get_legend().get_texts()]
+    assert "above the cutoff (not fitted)" in labels
+
+
+def test_the_fitted_curve_spans_the_excluded_points(tmp_path):
+    """So the extrapolation shows how far they fall off the line."""
+    regime = noise_regime.analyse(
+        snr_report(tmp_path), "snr", "power (mW)", max_param=20.0
+    )
+    figure = plotting.build_fit_figure(regime.panels, "t", "s")
+    fit_line = figure.axes[0].get_lines()[2]  # measured, excluded, then the fit
+    assert max(fit_line.get_xdata()) == pytest.approx(80.0)
+
+
+def test_plotting_with_a_cutoff_still_produces_the_figure(tmp_path, capsys):
+    screen = make_screen(tmp_path, ["v", "b"])
+    screen.max_param = 20.0
+    screen.run()
+    assert (tmp_path / "tif-analyzer_fit_snr.png").exists()
+    assert "figure saved to" in capsys.readouterr().out

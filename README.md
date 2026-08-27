@@ -193,9 +193,26 @@ Duas ressalvas viajam com a curva de transferência: o espalhamento dentro da
 cruas, então um offset eletrônico empurra o expoente para baixo de 1 — separar
 isso exigiria um quadro escuro.
 
+**`[x]` corta o topo da série.** Acima de certa potência a resposta satura ou a
+amostra branqueia, e aqueles pontos arrastam o expoente. `[x]` define a potência
+máxima a incluir; o corte tira o **arquivo inteiro** dos três ajustes, porque a
+mesma medida alimenta os três painéis e uma série em que a curva de transferência
+viu um quadro que o ajuste de SNR não viu seriam duas análises apresentadas como
+uma.
+
+Os pontos cortados continuam **desenhados**, vazados, com a curva ajustada
+estendida por cima deles — o motivo de cortar costuma ser que o topo foge da
+reta, e esconder a fuga esconde o motivo. Num exemplo com joelho em 40 mW, o
+ajuste da resposta vai de `P^0,63` (indeterminado) para `P^1,00` ao cortar.
+
+O corte tem preço e ele aparece: menos pontos e menos alavanca. No mesmo
+exemplo, a curva de transferência cai para 0,42 década e passa a dizer
+*indeterminate* — corretamente.
+
 `[l]` alterna log-log, `[v]` desenha os três painéis, `[o]` grava o laudo. A tela
 recalcula do relatório a cada desenho: não existe um quarto estado derivado para
-ficar desatualizado.
+ficar desatualizado. Como o corte de beads em `[k]`, o corte de potência é knob
+de análise da sessão — não vai para sidecar nenhum.
 
 ### Dados de exemplo
 

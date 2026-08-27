@@ -237,3 +237,101 @@ def test_negative_snr_points_are_dropped_not_fatal():
     assert regime.snr.fit.n_dropped == 1
     assert regime.snr.fit.n_points == 4
     assert regime.noise.fit.n_points == 5  # the regime fit is untouched by it
+
+
+# --------------------------------------------------------------------------- #
+# the parameter cutoff
+# --------------------------------------------------------------------------- #
+
+
+def saturating(knee=20.0, gain=2000.0) -> RunReport:
+    """Linear up to *knee*, flat above it — a series that saturates at the top."""
+    values = {}
+    for power in POWERS:
+        signal = gain * min(power, knee)
+        values[power] = measurement(signal, shot(signal))
+    return report_from(values)
+
+
+def test_the_cutoff_drops_the_files_above_it():
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)", max_param=20.0)
+    assert regime.max_param == 20.0
+    assert regime.n_excluded == 2
+    assert regime.snr.fit.n_points == 3
+    assert max(regime.snr.xs) == 20.0
+
+
+def test_the_cutoff_drops_whole_files_from_every_fit():
+    """One measurement feeds all three panels; a cutoff that reached only some
+    of them would be two analyses reported as one."""
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)", max_param=20.0)
+    assert regime.response.fit.n_points == 3
+    assert regime.noise.fit.n_points == 3
+
+
+def test_the_excluded_points_are_kept_for_the_figure():
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)", max_param=20.0)
+    for panel in regime.panels:
+        assert len(panel.excluded_xs) == 2
+        assert len(panel.excluded_ys) == 2
+    assert sorted(regime.snr.excluded_xs) == [40.0, 80.0]
+
+
+def test_the_cutoff_is_reported_not_silent():
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)", max_param=20.0)
+    assert any("above 20 left out" in reason for reason in regime.reasons)
+
+
+def test_no_cutoff_leaves_everything_in():
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)")
+    assert regime.max_param is None
+    assert regime.n_excluded == 0
+    assert all(panel.excluded_xs == () for panel in regime.panels)
+    assert regime.snr.fit.n_points == len(POWERS)
+
+
+def test_the_cutoff_rescues_a_saturating_series():
+    """The reason the knob exists: above the knee the response flattens, the
+    response fit reads sub-linear, and cutting the top restores it."""
+    whole = noise_regime.analyse(saturating(), "snr", "power (mW)")
+    assert not whole.response.verdict.decided
+    assert whole.response.fit.exponent < 0.9
+
+    trimmed = noise_regime.analyse(saturating(), "snr", "power (mW)", max_param=20.0)
+    assert trimmed.response.verdict.decided
+    assert trimmed.response.fit.exponent == pytest.approx(1.0, abs=1e-9)
+
+
+def test_a_cutoff_that_leaves_too_few_points_says_so():
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)", max_param=10.0)
+    assert regime.conclusion == "no fit"
+    assert "at least 3" in regime.noise.error
+    assert len(regime.noise.excluded_xs) == 3  # still drawable
+
+
+def test_a_cutoff_below_everything_is_not_a_crash():
+    regime = noise_regime.analyse(shot_limited(), "snr", "power (mW)", max_param=0.1)
+    assert regime.conclusion == "no fit"
+    assert regime.n_excluded == len(POWERS)
+
+
+def test_splitting_keeps_the_boundary_value():
+    """``max_param`` is inclusive: a cutoff of 20 keeps the 20 mW file."""
+    kept, dropped = noise_regime.split_at(shot_limited(), 20.0)
+    assert [r.record.param_value for r in kept.results] == [5.0, 10.0, 20.0]
+    assert [r.record.param_value for r in dropped.results] == [40.0, 80.0]
+
+
+def test_an_undecided_regime_is_not_narrated_as_a_disagreement():
+    """The SNR exponent can only disagree with a regime that was decided.
+    Against an indeterminate one it is context, and claiming a disagreement
+    would invent a finding out of a refusal to answer."""
+    values = {
+        power: measurement(5.0 * power, shot(5.0 * power)) for power in POWERS
+    }
+    regime = noise_regime.analyse(report_from(values), "snr", "power (mW)")
+    assert not regime.noise.verdict.decided  # dim sample, no lever arm
+    assert regime.snr.verdict.decided
+    assert not any("points the other way" in reason for reason in regime.reasons)
+    assert not any("sub-linear response" in reason for reason in regime.reasons)
+    assert any("snr vs power (mW): b =" in reason for reason in regime.reasons)

@@ -1,6 +1,6 @@
 # Resumo — ns-utils
 
-Duas ferramentas, um pacote Python 3.10+, 404 testes.
+Duas ferramentas, um pacote Python 3.10+, 423 testes.
 
 ## 1. TIF Series Analyzer (`tif-analyzer`)
 
@@ -53,6 +53,11 @@ travados. Decide **shot × detector**.
   ajuste. Fundo alto come a alavanca da curva de transferência.
 - Onde a curva é limpa, a amplitude do modelo b = 1 é o **ganho** em
   contagens/elétron.
+- **`[x]` corta o topo da série** (saturação, bleaching). Tira o arquivo inteiro
+  dos três ajustes — corte por painel seriam duas análises apresentadas como uma
+  — e os pontos cortados continuam desenhados, vazados, com a curva estendida
+  por cima. O preço aparece: menos alavanca, e o veredito pode virar
+  *indeterminado*.
 
 ## 2. Interferência de padrão fixo (`tif-interference`, tecla `[i]`)
 

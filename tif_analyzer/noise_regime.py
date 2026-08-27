@@ -97,6 +97,11 @@ class Fitted:
     y_label: str
     xs: tuple[float, ...] = ()
     ys: tuple[float, ...] = ()
+    #: Points the parameter cutoff left out. Kept rather than discarded so the
+    #: figure can show them: the reason for setting a cutoff is usually that the
+    #: top of the range bends away from the line, and that is worth looking at.
+    excluded_xs: tuple[float, ...] = ()
+    excluded_ys: tuple[float, ...] = ()
     fit: PowerLawFit | None = None
     verdict: Verdict | None = None
     error: str | None = None
@@ -116,9 +121,12 @@ class RegimeReport:
 
     snr: Fitted
     response: Fitted | None  # signal above background vs parameter
-    noise: Fitted | None  # signal_std vs signal above background
+    noise: Fitted | None  # signal variance vs signal mean
     conclusion: str
     reasons: tuple[str, ...]
+    #: The parameter cutoff in force, and how many files it left out.
+    max_param: float | None = None
+    n_excluded: int = 0
 
     @property
     def panels(self) -> list[Fitted]:
@@ -133,20 +141,49 @@ def _fit_one(
     y_label: str,
     targets: dict[float, str],
     k_sigma: float,
+    excluded: tuple[Sequence[float], Sequence[float]] = ((), ()),
 ) -> Fitted:
+    excluded_xs = tuple(float(v) for v in excluded[0])
+    excluded_ys = tuple(float(v) for v in excluded[1])
     try:
         fit = fit_power_law(xs, ys, locked=tuple(targets))
     except FitError as exc:
-        return Fitted(label=label, x_label=x_label, y_label=y_label, error=str(exc))
+        return Fitted(
+            label=label,
+            x_label=x_label,
+            y_label=y_label,
+            excluded_xs=excluded_xs,
+            excluded_ys=excluded_ys,
+            error=str(exc),
+        )
     return Fitted(
         label=label,
         x_label=x_label,
         y_label=y_label,
         xs=tuple(float(v) for v in xs),
         ys=tuple(float(v) for v in ys),
+        excluded_xs=excluded_xs,
+        excluded_ys=excluded_ys,
         fit=fit,
         verdict=classify(fit, targets, k_sigma),
     )
+
+
+def split_at(report: RunReport, max_param: float | None) -> tuple[RunReport, RunReport]:
+    """``(kept, excluded)``, split on the filename parameter.
+
+    A cutoff drops whole *files*, not points from one panel: the same
+    measurement feeds all three fits, and a series where the transfer curve saw
+    a frame the SNR fit did not would be two analyses reported as one.
+    """
+    kept = RunReport(config_snapshot=dict(report.config_snapshot))
+    excluded = RunReport(config_snapshot=dict(report.config_snapshot))
+    for result in report.results:
+        if max_param is not None and result.record.param_value > max_param:
+            excluded.results.append(result)
+        else:
+            kept.results.append(result)
+    return kept, excluded
 
 
 def analyse(
@@ -154,9 +191,19 @@ def analyse(
     series_key: str,
     param_label: str = "parameter",
     k_sigma: float = DEFAULT_K_SIGMA,
+    max_param: float | None = None,
 ) -> RegimeReport:
     """Fit *series_key* against the parameter, with the cross-checks when the
-    metric's other outputs make them possible."""
+    metric's other outputs make them possible.
+
+    *max_param* drops every file whose parameter is above it, from all three
+    fits. It exists for the top of a power series, where saturation or
+    photobleaching bends the response and drags the exponent with it — the
+    points are still returned, so the figure can show what was left out.
+    """
+    full = report
+    report, dropped = split_at(report, max_param)
+
     xs, ys = report.series(series_key)
     headline = _fit_one(
         f"{series_key} vs {param_label}",
@@ -166,12 +213,13 @@ def analyse(
         series_key,
         SNR_TARGETS,
         k_sigma,
+        excluded=dropped.series(series_key) if dropped.results else ((), ()),
     )
 
     response = noise = None
-    if _has_outputs(report, ("signal_mean", "noise_mean", "signal_std")):
-        # Above background, like the noise fit below. The raw signal mean carries
-        # the detector's offset, which is a constant the excitation never
+    if _has_outputs(full, ("signal_mean", "noise_mean", "signal_std")):
+        # Above background, like the transfer curve below. The raw signal mean
+        # carries the detector's offset, which is a constant the excitation never
         # touches: at low power it dominates and drags the exponent towards zero,
         # so a perfectly linear response reads as sub-linear.
         response_x, response_y = _series_of(report, _signal_above_background)
@@ -183,6 +231,7 @@ def analyse(
             "signal_mean − noise_mean (counts)",
             {LINEAR: "linear in the parameter"},
             k_sigma,
+            excluded=_series_of(dropped, _signal_above_background),
         )
         mean, variance = _transfer_curve(report)
         noise = _fit_one(
@@ -193,11 +242,22 @@ def analyse(
             "variance inside the signal area (counts²)",
             TRANSFER_TARGETS,
             k_sigma,
+            excluded=_transfer_curve(dropped),
         )
 
     conclusion, reasons = _combine(headline, response, noise)
+    if dropped.results:
+        reasons = (
+            f"{len(dropped.results)} file(s) above {max_param:g} left out of every fit",
+        ) + reasons
     return RegimeReport(
-        snr=headline, response=response, noise=noise, conclusion=conclusion, reasons=reasons
+        snr=headline,
+        response=response,
+        noise=noise,
+        conclusion=conclusion,
+        reasons=reasons,
+        max_param=max_param,
+        n_excluded=len(dropped.results),
     )
 
 
@@ -285,7 +345,15 @@ def _combine(
 
     if snr.available and snr.verdict is not None:
         reasons.append(f"{snr.label}: b = {snr.fit.exponent:.2f} ± {snr.fit.exponent_stderr:.2f}")
-        if noise is not None and noise.available and noise.verdict is not None:
+        if (
+            noise is not None
+            and noise.available
+            and noise.verdict is not None
+            # Only a decided regime can be disagreed with. Against an
+            # *indeterminate* one the SNR exponent is context and nothing more,
+            # and narrating a disagreement would invent a finding.
+            and noise.verdict.decided
+        ):
             if snr.verdict.decided and snr.verdict.conclusion != conclusion:
                 # The two directions of disagreement have different causes, and
                 # naming the wrong one sends you looking in the wrong place.
