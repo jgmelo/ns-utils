@@ -11,19 +11,14 @@ Nothing is written until ``[w]``.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from .. import loading, plotting
-from ..interference import analyse_channel, crosschannel
+from .. import acquisition_sidecar, loading, plotting, roi_sidecar
+from ..interference import batch as batch_mod
 from ..interference.figures import build_subtraction_figure
-from ..interference.frames import FrameError, frame_from_array, load_frame
-from ..interference.subtract import (
-    MODES,
-    SubtractionError,
-    SubtractionPlan,
-    alignment_shift,
-    subtract,
-)
+from ..interference.frames import FrameError, load_frame
+from ..interference.subtract import MODES, SubtractionError
 from ..interference.writing import default_output_path, write_corrected
 from . import prompts, render
 
@@ -32,12 +27,15 @@ class SubtractionScreen:
     """Its own key dispatch; returns to the interference screen on [b]."""
 
     def __init__(self, settings, directory: Path, read_key, page_policy: str = "error",
-                 clear: bool = True):
+                 clear: bool = True, records: list | None = None):
         self.settings = settings
         self.directory = directory
         self.read_key = read_key
         self.page_policy = page_policy
         self.clear = clear
+        #: The files ``[a]`` would correct: whatever the current glob and regex
+        #: found, which is exactly the series that will later be plotted.
+        self.records = list(records or [])
 
         self.mode = "reference" if settings.reference is not None else "profile"
         self.band_limited = True
@@ -75,6 +73,10 @@ class SubtractionScreen:
         if self.mode == "profile":
             blocked["n"] = "profile mode uses no reference"
             blocked["e"] = "profile mode has nothing to scale"
+        if not self.records:
+            blocked["a"] = "no matching files"
+        elif self.mode == "reference" and self.settings.reference is None:
+            blocked["a"] = "reference mode needs a reference frame"
         return blocked
 
     # -- rendering ----------------------------------------------------------- #
@@ -143,6 +145,7 @@ class SubtractionScreen:
             (entry("e", f"fit per line: {'ON' if self.per_line else 'OFF'}"),
              entry("g", "compute")),
             (entry("v", "view before/after"), entry("w", "write the corrected frame")),
+            (entry("a", f"apply to all {len(self.records)} matching file(s)"), ""),
             ("[b] back", ""),
         ]
         width = max(len(left) for left, _ in rows) + 4
@@ -180,11 +183,16 @@ class SubtractionScreen:
         self._invalidate()
 
     def action_compute(self) -> None:
+        """One frame, through the same function the batch uses.
+
+        The screen is meant to be a preview of what ``[a]`` will do to the whole
+        series; the only way to keep that true is for both to call the same
+        code.
+        """
         if self.settings.signal is None:
             return
         if self.mode == "reference" and self.settings.reference is None:
             return
-        params = self.settings.params()
         try:
             signal_frame = load_frame(self.settings.signal.path, self.page_policy)
             reference_frame = (
@@ -196,67 +204,28 @@ class SubtractionScreen:
             self.messages.append(f"  ✗ {exc}")
             return
 
-        flyback = self.settings.acquisition().flyback_columns(signal_frame.n_columns)
-        before = analyse_channel(signal_frame, flyback, params)
-        frequency = before.spectrum.centroid_frequency if before.spectrum.detected else 0.0
-
-        band = None
-        shift = 0.0
-        if reference_frame is not None:
-            if reference_frame.shape != signal_frame.shape:
-                self.messages.append(
-                    f"  ✗ reference is {reference_frame.n_columns}x{reference_frame.n_lines} px "
-                    f"but the signal is {signal_frame.n_columns}x{signal_frame.n_lines} px"
-                )
-                return
-            reference_analysis = analyse_channel(reference_frame, flyback, params)
-            if before.spectrum.detected and reference_analysis.spectrum.detected:
-                cross = crosschannel.compare(
-                    before.profile.analysis_profile,
-                    reference_analysis.profile.analysis_profile,
-                    before.spectrum,
-                    reference_analysis.spectrum,
-                )
-                band = (
-                    min(before.spectrum.cluster_low_bin, reference_analysis.spectrum.cluster_low_bin),
-                    max(before.spectrum.cluster_high_bin, reference_analysis.spectrum.cluster_high_bin),
-                )
-                shift = alignment_shift(cross.phase_offset_px)
-            else:
-                self.messages.append(
-                    "  ! no dominant component in one of the frames — subtracting unaligned, "
-                    "with no band"
-                )
-
-        plan = SubtractionPlan(
-            mode=self.mode,
-            band_limited=self.band_limited and band is not None,
-            per_line=self.per_line,
-            shift_px=shift,
-        )
         try:
-            result = subtract(
-                signal_frame.data,
-                plan,
-                reference=reference_frame.data if reference_frame else None,
-                mask_result=before.mask,
-                band=band,
-                frequency=frequency,
-                params=params,
+            correction = batch_mod.correct_frame(
+                signal_frame,
+                mode=self.mode,
+                band_limited=self.band_limited,
+                per_line=self.per_line,
+                params=self.settings.params(),
+                acquisition=self.settings.acquisition(),
+                reference_frame=reference_frame,
+                analyse_after=True,
             )
         except SubtractionError as exc:
             self.messages.append(f"  ✗ {exc}")
             return
 
-        self.result = result
-        self.before = before
-        self.after = analyse_channel(
-            frame_from_array(result.corrected, dtype="float32", path=self.settings.signal.path),
-            flyback,
-            params,
-        )
+        self.result = correction.result
+        self.before = correction.before
+        self.after = correction.after
         self.written = None
-        for warning in result.warnings:
+        for note in correction.notes:
+            self.messages.append(f"  ! {note}")
+        for warning in correction.result.warnings:
             self.messages.append(f"  ! {warning}")
 
     def action_view(self) -> None:
@@ -298,6 +267,133 @@ class SubtractionScreen:
         if sidecar is not None:
             self.messages.append(f"    provenance in {sidecar.name}")
 
+    # -- the whole series ---------------------------------------------------- #
+
+    def action_apply_all(self) -> None:
+        """Correct every matching file into a directory of its own.
+
+        The corrected frames keep their names, so the glob and the regex that
+        found the originals find them too: point the analyzer at the new
+        directory and the series is ready to run.
+        """
+        if not self.records:
+            return
+        if self.mode == "reference" and self.settings.reference is None:
+            return
+
+        paths = [record.path for record in self.records]
+        default = batch_mod.default_output_dir(self.directory, self.mode)
+        print(f"\n  {len(paths)} file(s) will be corrected in {self.mode} mode.")
+        if self.mode == "reference":
+            print(
+                "  ! the same reference frame is used for every one of them — "
+                "sound only if the pattern is locked, not drifting between acquisitions."
+            )
+        target = prompts.prompt_export_path(default, title="Write the corrected frames into")
+        if target is None:
+            return
+
+        generator = batch_mod.run_batch(
+            paths,
+            target,
+            mode=self.mode,
+            band_limited=self.band_limited,
+            per_line=self.per_line,
+            params=self.settings.params(),
+            acquisition=self.settings.acquisition(),
+            reference_path=(
+                self.settings.reference.path
+                if self.mode == "reference" and self.settings.reference
+                else None
+            ),
+            page_policy=self.page_policy,
+        )
+        print()
+        report: batch_mod.BatchReport
+        try:
+            while True:
+                try:
+                    progress = next(generator)
+                except StopIteration as stop:
+                    report = stop.value
+                    break
+                print(f"  {self._progress_line(progress)}", flush=True)
+        except batch_mod.BatchError as exc:
+            self.messages.append(f"  ✗ {exc}")
+            return
+
+        carried = self._carry_sidecars(report.output_dir)
+
+        print()
+        for line in self._batch_summary(report):
+            print(f"  {line}")
+        for name in carried:
+            print(f"  {name} copied across — the areas still fit, the frames kept their size")
+        render.pause(self.read_key)
+
+    def _carry_sidecars(self, output_dir: Path) -> list[str]:
+        """Take the areas and the acquisition along to the corrected directory.
+
+        Without this, pointing ``[d]`` at the output means redrawing the areas:
+        they are pixel coordinates, they follow the directory, and the corrected
+        frames have exactly the geometry they were drawn on.
+        """
+        carried = []
+        for name in (roi_sidecar.SIDECAR_NAME, acquisition_sidecar.SIDECAR_NAME):
+            source = self.directory / name
+            if not source.is_file():
+                continue
+            try:
+                shutil.copy2(source, output_dir / name)
+            except OSError as exc:
+                self.messages.append(f"  ! could not copy {name}: {exc}")
+                continue
+            carried.append(name)
+        return carried
+
+    @staticmethod
+    def _progress_line(progress: batch_mod.BatchProgress) -> str:
+        outcome = progress.outcome
+        counter = f"[{progress.index}/{progress.total}]"
+        name = outcome.source.name
+        if outcome.skipped is not None:
+            return f"{counter} {name}: skipped — {outcome.skipped}"
+        if outcome.error is not None:
+            return f"{counter} ✗ {name}: {type(outcome.error).__name__}: {outcome.error}"
+        result = outcome.result
+        assert result is not None
+        return (
+            f"{counter} ✓ {name}: {result.removed_fraction:6.1%} of the stripe removed, "
+            f"noise {result.noise_change:+.1%}"
+        )
+
+    @staticmethod
+    def _batch_summary(report: batch_mod.BatchReport) -> list[str]:
+        lines = [
+            f"✓ {len(report.written)} frame(s) written to {report.output_dir}",
+        ]
+        if report.summary_path is not None:
+            lines.append(f"  summary table: {report.summary_path.name}")
+        if report.skipped:
+            lines.append(f"  {len(report.skipped)} skipped")
+        if report.failures:
+            lines.append(f"  ✗ {len(report.failures)} failed:")
+            lines.extend(
+                f"      {outcome.source.name}: {outcome.error}" for outcome in report.failures
+            )
+        spread = report.removed_range()
+        if spread is not None:
+            low, high = spread
+            lines.append(f"  stripe removed: {low:.1%} … {high:.1%} across the series")
+            if high - low > 0.15:
+                lines.append(
+                    "  ! the frames were not corrected alike — a spread that wide puts a "
+                    "trend into the series that the sample does not have. Check the outliers "
+                    "in the summary table before plotting."
+                )
+        lines.append("  point [d] at that directory and run the series as usual.")
+        return lines
+
     # -- loop ---------------------------------------------------------------- #
 
     def dispatch(self, key: str) -> bool:
@@ -310,6 +406,7 @@ class SubtractionScreen:
             "g": self.action_compute,
             "v": self.action_view,
             "w": self.action_write,
+            "a": self.action_apply_all,
         }
         action = actions.get(key)
         if action is not None:

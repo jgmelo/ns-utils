@@ -471,3 +471,78 @@ def test_a_mismatched_reference_is_reported_not_crashed(screen_dir, capsys):
     screen.run()
     assert screen.result is None
     assert "✗" in capsys.readouterr().out
+
+
+# -- the screen: applying it to the whole series ----------------------------- #
+
+
+def screen_records(screen_dir):
+    from tif_analyzer.discovery import FileRecord
+
+    return [
+        FileRecord(path, "power", 20.0, "20")
+        for path in sorted(screen_dir.glob("medida_*.tif"))
+    ]
+
+
+def test_apply_to_all_is_blocked_without_matching_files(screen_dir, capsys):
+    screen = make_subtraction_screen(screen_dir, "b")
+    screen.run()
+    assert "(no matching files)" in capsys.readouterr().out
+
+
+def test_apply_to_all_corrects_every_file_into_its_own_directory(
+    screen_dir, monkeypatch, capsys
+):
+    from tif_analyzer.ui import prompts
+
+    output = screen_dir / "deprofiled"
+    monkeypatch.setattr(prompts, "prompt_export_path", lambda *a, **k: output)
+    screen = make_subtraction_screen(screen_dir, ["a", "", "b"], with_reference=False)
+    screen.records = screen_records(screen_dir)
+    screen.run()
+
+    written = sorted(path.name for path in output.glob("*.tif"))
+    assert written == ["medida_001_20mW[PMT2].tif", "medida_002_20mW[PMT1].tif"]
+    text = capsys.readouterr().out
+    assert "of the stripe removed" in text
+    assert "2 frame(s) written" in text
+    assert "point [d] at that directory" in text
+
+
+def test_apply_to_all_takes_the_areas_along(screen_dir, monkeypatch, capsys):
+    """Areas are pixel coordinates and the corrected frames keep their size."""
+    from tif_analyzer import roi_sidecar
+    from tif_analyzer.ui import prompts
+
+    (screen_dir / roi_sidecar.SIDECAR_NAME).write_text("{}", encoding="utf-8")
+    output = screen_dir / "deprofiled"
+    monkeypatch.setattr(prompts, "prompt_export_path", lambda *a, **k: output)
+    screen = make_subtraction_screen(screen_dir, ["a", "", "b"], with_reference=False)
+    screen.records = screen_records(screen_dir)
+    screen.run()
+    assert (output / roi_sidecar.SIDECAR_NAME).exists()
+    assert "copied across" in capsys.readouterr().out
+
+
+def test_apply_to_all_warns_that_one_reference_serves_every_file(
+    screen_dir, monkeypatch, capsys
+):
+    from tif_analyzer.ui import prompts
+
+    monkeypatch.setattr(prompts, "prompt_export_path", lambda *a, **k: screen_dir / "corrected")
+    screen = make_subtraction_screen(screen_dir, ["a", "", "b"])
+    screen.records = screen_records(screen_dir)
+    screen.run()
+    assert "the same reference frame is used for every one of them" in capsys.readouterr().out
+
+
+def test_apply_to_all_reports_a_batch_that_cannot_start(screen_dir, monkeypatch, capsys):
+    """Writing beside the originals is refused, and the screen says so."""
+    from tif_analyzer.ui import prompts
+
+    monkeypatch.setattr(prompts, "prompt_export_path", lambda *a, **k: screen_dir)
+    screen = make_subtraction_screen(screen_dir, ["a", "b"], with_reference=False)
+    screen.records = screen_records(screen_dir)
+    screen.run()
+    assert "overwrite" in capsys.readouterr().out

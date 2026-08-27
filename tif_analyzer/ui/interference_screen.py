@@ -411,6 +411,7 @@ class InterferenceScreen:
             self.read_key,
             page_policy=self.page_policy,
             clear=self.clear,
+            records=self.records,
         )
         screen.run()
         self.messages.extend(screen.messages)

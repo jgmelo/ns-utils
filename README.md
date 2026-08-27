@@ -174,7 +174,7 @@ No TUI, `[i]` abre uma **tela própria** onde se preenche tudo antes de rodar:
   [y] flyback fraction    [w] flyback in the frame: NO
   [k] bead cut (k sigmas)
   [g] run the report      [v] view the bead mask
-  [p] view profile & spectrum   [s] subtract the pattern
+  [p] view profile & spectrum   [s] subtract the pattern (one frame or the series)
   [o] save last report    [c] clear reference
   [b] back to the main menu
 ```
@@ -319,6 +319,50 @@ medida de SNR vai justamente medir. O nível de fundo original é preservado. Os
 parâmetros vão para a descrição do TIFF **e** um sidecar
 `<nome>.subtraction.json` — imagem corrigida sem registro de como é armadilha.
 
+Se a imagem corrigida abrir **toda branca**, é a escala de exibição: float32
+com fundo em ~1000 contagens num visualizador que espera 0–1. No ImageJ,
+`Image > Adjust > Brightness/Contrast > Auto`.
+
+#### A série inteira (`[a]`)
+
+`[a]` aplica o mesmo plano — o que está na tela, com os mesmos toggles — a
+**todos os arquivos que casam com o glob e o regex atuais**, para a série
+corrigida poder ser medida e plotada como qualquer outra.
+
+```
+  [1/3] ✓ medida_001_20mW.tif:  55.2% of the stripe removed, noise +0.0%
+  [2/3] ✓ medida_002_40mW.tif:  57.1% of the stripe removed, noise -0.1%
+  [3/3] ✓ medida_003_60mW.tif:  54.8% of the stripe removed, noise +0.0%
+
+  ✓ 3 frame(s) written to /dados/deprofiled
+    summary table: subtraction-summary.csv
+    stripe removed: 54.8% … 57.1% across the series
+    point [d] at that directory and run the series as usual.
+```
+
+Duas decisões que essa tela toma por você:
+
+- **Diretório próprio** (`deprofiled/` ou `corrected/`), nunca ao lado dos
+  originais — dois arquivos com o mesmo valor de parâmetro na mesma pasta é
+  exatamente o que a descoberta recusa, e a série corrigida nasceria
+  improcessável.
+- **Nomes preservados**, para o glob e o regex que acharam os originais acharem
+  os corrigidos sem você mexer em nada. Os sidecars de áreas e de aquisição
+  vão junto, porque as áreas são coordenadas em pixel e os quadros mantiveram
+  o tamanho: `[d]` na pasta nova e `[r]` já roda.
+
+Além do `.subtraction.json` de cada quadro, a corrida grava um
+`subtraction-summary.csv` com uma linha por arquivo. É o que responde a
+pergunta que um gráfico de série depende: **os quadros foram corrigidos de
+maneira parecida?** Uma corrida que vai de 20% a 90% de remoção colocou na
+série uma tendência que a amostra não tem — a tela avisa quando a faixa passa
+de 15 pontos percentuais.
+
+No modo `reference`, o *mesmo* quadro de referência serve para todos os
+arquivos (e é pulado se estiver na lista). Só é defensável com padrão travado;
+com deriva entre aquisições, cada sinal precisaria da sua própria referência
+simultânea.
+
 ### Dados de exemplo
 
 ```bash
@@ -365,11 +409,12 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `state.py` | `AppState` + regra de invalidação. |
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
 | `ui/interference_screen.py` | segunda tela: metadados de aquisição e execução do laudo. |
-| `ui/subtraction_screen.py` | terceira tela: calcula, mostra e grava a subtração. |
+| `ui/subtraction_screen.py` | terceira tela: calcula, mostra, grava a subtração e aplica à série. |
 | `interference/` | caracterização de padrão fixo: quadro único, laudo de texto. |
 | `interference/figures.py` | figuras da caracterização (máscara, perfil + espectro, antes/depois). |
 | `interference/subtract.py` | alinhamento, escala, subtração e as medidas de antes/depois. |
 | `interference/writing.py` | grava o quadro corrigido em float32 com procedência. |
+| `interference/batch.py` | corrige um quadro e corrige a série inteira, pela mesma função. |
 | `ui/` | loop de menu, teclas, prompts, renderização. Único lugar com stdin/stdout. |
 | `app.py` | entry point. |
 

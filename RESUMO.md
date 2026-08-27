@@ -1,6 +1,6 @@
 # Resumo — ns-utils
 
-Duas ferramentas, um pacote Python 3.10+, 319 testes.
+Duas ferramentas, um pacote Python 3.10+, 345 testes.
 
 ## 1. TIF Series Analyzer (`tif-analyzer`)
 
@@ -76,6 +76,14 @@ sem referência, só funciona se o padrão estiver travado na linha.
 Sempre reporta **listra removida e ruído injetado** — uma correção que tira 90%
 da listra e dobra o ruído não é ganho. Saída float32 com procedência no TIFF e
 num sidecar; nível de fundo original preservado.
+
+`[a]` aplica o mesmo plano a todos os arquivos que casam com glob + regex, pela
+**mesma função** que a tela usa num quadro só — a tela é preview do lote ou não
+serve. Saída num diretório próprio (ao lado dos originais seria duplicata de
+parâmetro) e com os nomes preservados (para o mesmo regex achá-los). Sidecars de
+áreas e aquisição vão junto. Um `subtraction-summary.csv` responde a pergunta
+que a série depende: os quadros foram corrigidos de maneira parecida? Faixa de
+remoção larga = tendência artificial na série.
 
 Sinal do deslocamento: a referência anda o **oposto** do offset medido. Errar o
 sinal deixa a listra intacta e produz um α plausível — por isso vive numa função
