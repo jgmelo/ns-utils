@@ -12,6 +12,7 @@ The state machine of §11::
           ├─ [e] → PROMPT_EXPORT
           ├─ [a] → SELECT_AREAS     blocking window; needs a GUI
           ├─ [i] → INTERFERENCE     its own screen, with its own keys
+          ├─ [f] → FIT              power-law fit, its own screen
           ├─ [!] → toggle duplicates
           └─ [q] → exit
 """
@@ -35,6 +36,7 @@ from ..discovery import DiscoveryError, DuplicateParameterError
 from ..regions import RegionError
 from ..state import AppState
 from . import prompts, render, selection
+from .fit_screen import FitScreen
 from .interference_screen import InterferenceScreen
 from .keys import KeyReader
 
@@ -124,6 +126,7 @@ class MenuApp:
         if not self.state.has_results:
             blocked["v"] = "no results — run the analysis first"
             blocked["e"] = "no results — run the analysis first"
+            blocked["f"] = "no results — run the analysis first"
         elif not self.backend.interactive:
             blocked["v"] = f"{self.backend.name} backend — saves a PNG"
         return blocked
@@ -386,6 +389,21 @@ class MenuApp:
             print(f"  ✓ plot saved to {outcome.saved_to}")
             render.pause(self.reader.read)
 
+    def action_fit(self) -> None:
+        """Open the fit screen. It recomputes from the report every draw, so it
+        holds no state that could go stale behind the run."""
+        if not self.state.has_results:
+            return
+        param_name = self.state.records[0].param_name if self.state.records else "parameter"
+        try:
+            unit = discovery.infer_unit(self.state.pattern)
+        except DiscoveryError:  # pragma: no cover - pattern already validated
+            unit = None
+        screen = FitScreen(self.state, self.reader.read, clear=self.clear)
+        screen.param_label = plotting.axis_label(param_name, unit)
+        screen.run()
+        self.messages.extend(screen.messages)
+
     def action_export(self) -> None:
         if not self.state.has_results:
             return
@@ -418,6 +436,7 @@ class MenuApp:
             "r": self.action_run,
             "v": self.action_plot,
             "e": self.action_export,
+            "f": self.action_fit,
             "!": self.action_toggle_duplicates,
         }
         action = actions.get(key)

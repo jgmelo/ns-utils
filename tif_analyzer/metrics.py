@@ -198,6 +198,11 @@ def _std(image: np.ndarray) -> dict[str, float]:
         OutputSpec("signal_mean", "Signal mean", "counts"),
         OutputSpec("noise_mean", "Noise mean", "counts"),
         OutputSpec("noise_std", "Noise standard deviation", "counts"),
+        # Spread *inside* the signal area, which the ratio itself does not use.
+        # It is the only output that carries the sample's own photon statistics:
+        # the noise area holds none of the sample's photons, so its sigma cannot
+        # grow with the sample's brightness however shot-limited the image is.
+        OutputSpec("signal_std", "Signal-area standard deviation", "counts"),
     ),
     requires_regions=(SIGNAL, NOISE),
 )
@@ -207,6 +212,10 @@ def _snr(image: np.ndarray, regions: Mapping[str, np.ndarray]) -> dict[str, floa
     if noise.size < 2:
         raise ValueError(
             f"noise area needs at least 2 pixels for ddof=1, it has {noise.size}"
+        )
+    if signal.size < 2:
+        raise ValueError(
+            f"signal area needs at least 2 pixels for ddof=1, it has {signal.size}"
         )
     noise_std = float(np.std(noise, ddof=1))
     if noise_std == 0.0:
@@ -221,4 +230,5 @@ def _snr(image: np.ndarray, regions: Mapping[str, np.ndarray]) -> dict[str, floa
         "signal_mean": signal_mean,
         "noise_mean": noise_mean,
         "noise_std": noise_std,
+        "signal_std": float(np.std(signal, ddof=1)),
     }

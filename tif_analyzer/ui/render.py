@@ -103,6 +103,8 @@ def menu(state: AppState, blockers: dict[str, str | None]) -> str:
     ]
     left.append(entry("a", "select areas" if state.regions is None else "redraw areas"))
     right.append(entry("i", "interference screen"))
+    left.append(entry("f", "fit a power law"))
+    right.append(("", ""))
     if len(spec.outputs) > 1:
         left.append(entry("s", "select series"))
         right.append(("", ""))

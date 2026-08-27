@@ -53,7 +53,13 @@ def test_snr_declares_its_regions_and_outputs_statically():
     spec = metrics.get("snr")
     assert spec.requires_regions == ("signal", "noise")
     assert spec.needs_regions is True
-    assert spec.output_keys == ("snr", "signal_mean", "noise_mean", "noise_std")
+    assert spec.output_keys == (
+        "snr",
+        "signal_mean",
+        "noise_mean",
+        "noise_std",
+        "signal_std",
+    )
     assert spec.default_series == "snr"
 
 
@@ -71,6 +77,26 @@ def test_snr_computes_the_declared_formula():
     assert values["noise_mean"] == pytest.approx(17.5)
     assert values["noise_std"] == pytest.approx(expected_std)
     assert values["snr"] == pytest.approx((1000.0 - 17.5) / expected_std)
+
+
+def test_snr_also_reports_the_spread_inside_the_signal_area():
+    """Not used by the ratio: it is the only output carrying the sample's own
+    photon statistics, which the noise area cannot."""
+    signal = np.arange(16, dtype=np.float64)
+    noise = np.arange(36, dtype=np.float64)
+    values = compute_validated(
+        metrics.get("snr"), np.zeros((2, 2)), {"signal": signal, "noise": noise}
+    )
+    assert values["signal_std"] == pytest.approx(float(np.std(signal, ddof=1)))
+
+
+def test_a_one_pixel_signal_area_is_refused():
+    with pytest.raises(ValueError, match="signal area needs at least 2"):
+        compute_validated(
+            metrics.get("snr"),
+            np.zeros((2, 2)),
+            {"signal": np.array([5.0]), "noise": np.arange(9, dtype=np.float64)},
+        )
 
 
 def test_snr_without_regions_raises_the_precondition():

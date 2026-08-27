@@ -172,6 +172,133 @@ def build_figure(
     return fig
 
 
+# The fitted curve has to be distinguishable from the data without relying on
+# colour alone: solid for the free fit, dashed for the models with the exponent
+# held fixed.
+FIT_COLOR = "#B4341C"
+LOCKED_COLORS = ("#6B7280", "#9AA1AC")
+
+
+def _curve_x(xs, log_axes: bool):
+    """Where to sample a fitted curve: geometric spacing under log axes, so the
+    line is smooth where the eye is looking."""
+    import numpy as np
+
+    low, high = float(min(xs)), float(max(xs))
+    if log_axes and low > 0:
+        return np.logspace(np.log10(low), np.log10(high), 200)
+    return np.linspace(low, high, 200)
+
+
+def _tidy_log_ticks(axis) -> None:
+    """Plain numbers at 1, 2 and 5 per decade.
+
+    A power-law series usually covers one or two decades, and matplotlib's
+    default then labels every minor tick in scientific notation — ``3×10¹4×10¹``
+    running into each other. Three labels a decade, written as ordinary numbers,
+    is what a reader of this plot actually needs.
+    """
+    from matplotlib.ticker import FuncFormatter, LogLocator
+
+    plain = FuncFormatter(lambda value, _: f"{value:g}")
+    axis.set_major_locator(LogLocator(base=10.0))
+    axis.set_minor_locator(LogLocator(base=10.0, subs=(2.0, 5.0)))
+    axis.set_major_formatter(plain)
+    axis.set_minor_formatter(plain)
+
+
+def draw_fit_panel(ax, panel, log_axes: bool = True) -> None:
+    """One fitted series: the points, the free fit, and the locked models.
+
+    *panel* is a :class:`~tif_analyzer.noise_regime.Fitted` — anything with
+    ``xs``, ``ys``, ``fit``, ``x_label`` and ``y_label``.
+    """
+    ax.plot(
+        panel.xs,
+        panel.ys,
+        linestyle="none",
+        marker="o",
+        markersize=7,
+        color=SERIES_COLOR,
+        markerfacecolor=SERIES_COLOR,
+        markeredgecolor="white",
+        markeredgewidth=1.0,
+        label="measured",
+        zorder=4,
+    )
+
+    fit = panel.fit
+    if fit is not None:
+        curve_x = _curve_x(panel.xs, log_axes)
+        ax.plot(
+            curve_x,
+            fit.predict(curve_x),
+            color=FIT_COLOR,
+            linewidth=2.0,
+            zorder=3,
+            label=f"fit: b = {fit.exponent:.2f} ± {fit.exponent_stderr:.2f}",
+        )
+        for index, (exponent, model) in enumerate(sorted(fit.locked.items())):
+            ax.plot(
+                curve_x,
+                fit.predict_locked(curve_x, exponent),
+                color=LOCKED_COLORS[index % len(LOCKED_COLORS)],
+                linewidth=1.6,
+                linestyle="--",
+                zorder=2,
+                label=f"b = {exponent:g} locked (rms {model.residual_rms:.3f})",
+            )
+
+    if log_axes:
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        _tidy_log_ticks(ax.xaxis)
+        _tidy_log_ticks(ax.yaxis)
+    ax.set_xlabel(panel.x_label, color=TEXT_PRIMARY, fontsize=9)
+    ax.set_ylabel(panel.y_label, color=TEXT_PRIMARY, fontsize=9)
+    ax.set_title(panel.label, fontsize=10, color=TEXT_PRIMARY, loc="left")
+    ax.grid(True, which="both", color=GRID_COLOR, linewidth=0.8, alpha=0.9, zorder=0)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(AXIS_COLOR)
+    ax.tick_params(colors=TEXT_MUTED, labelsize=8)
+    ax.legend(fontsize=7.5, frameon=False, labelcolor=TEXT_MUTED)
+
+
+def build_fit_figure(panels, title: str, subtitle: str, log_axes: bool = True):
+    """One panel per fitted series, side by side.
+
+    Log axes by default: a power law is a straight line there, and the exponent
+    is the slope the eye can read directly. On linear axes 0.5 and 1.0 both look
+    like plausible curves through the same four points.
+    """
+    import matplotlib.pyplot as plt
+
+    panels = [panel for panel in panels if panel.fit is not None]
+    if not panels:
+        raise ValueError("nothing to plot: no series could be fitted")
+
+    width = 5.2 * len(panels)
+    fig, axes = plt.subplots(1, len(panels), figsize=(width, 4.6), layout="constrained")
+    if len(panels) == 1:
+        axes = [axes]
+    for ax, panel in zip(axes, panels):
+        draw_fit_panel(ax, panel, log_axes)
+
+    fig.suptitle(title, fontsize=13, color=TEXT_PRIMARY, x=0.01, ha="left")
+    axes[0].annotate(
+        subtitle,
+        xy=(0.0, 1.10),
+        xycoords="axes fraction",
+        fontsize=9,
+        color=TEXT_MUTED,
+        annotation_clip=False,
+    )
+    return fig
+
+
 def writable_path(name: str, directory: Path | str | None = None) -> Path:
     """Where a headless figure lands: next to the data if that is writable,
     then the CWD, then a temporary directory."""

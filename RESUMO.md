@@ -1,6 +1,6 @@
 # Resumo — ns-utils
 
-Duas ferramentas, um pacote Python 3.10+, 345 testes.
+Duas ferramentas, um pacote Python 3.10+, 404 testes.
 
 ## 1. TIF Series Analyzer (`tif-analyzer`)
 
@@ -11,9 +11,11 @@ métrica × parâmetro.
 | métrica | saídas | áreas |
 |---|---|---|
 | `std` | desvio amostral (ddof=1) da imagem inteira | não |
-| `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std` | sim |
+| `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std`, `signal_std` | sim |
 
 `snr = (signal_mean − noise_mean) / noise_std`, em contagens brutas.
+`signal_std` não entra na razão: é o desvio *dentro* da área de sinal, única
+saída que carrega a estatística de fótons da amostra.
 
 `[a]` seleciona duas áreas (retângulo/elipse) numa imagem de referência,
 aplicadas a toda a série; ficam em `.tif-analyzer-rois.json` no diretório dos
@@ -30,6 +32,27 @@ dados e são conferidas contra a dimensão real das imagens.
 - Toda mudança passa por `AppState.update` e limpa resultados.
 - Três contagens sempre reportadas: glob → regex → float.
 - Falha por arquivo é coletada, não aborta a corrida.
+
+### Ajuste (`[f]`)
+
+`y = a·xᵇ` por mínimos quadrados em log-log, com `b` livre e os dois modelos
+travados. Decide **shot × detector**.
+
+- **Quem decide é a curva de transferência de fótons** (variância × média, dentro
+  da área de sinal): Poisson dá variância = média, logo b = 1 shot, b = 0
+  detector. O SNR **não** decide: divide por σ da área de ruído, que não tem
+  fóton da amostra, então `SNR ∝ P` sai linear por construção. Verificado em
+  quadros Poisson: σ do ruído parado em 31 enquanto σ do sinal ia de 36 a 75.
+- **Nem σ × sinal-acima-do-fundo**: a área de sinal contém o fundo, então
+  `σ = √(fundo + sinal)` não é lei de potência. Nos mesmos quadros deu 0,27 e
+  *neither*; a curva de transferência deu 0,99.
+- **Erro-padrão do expoente** = `σ_resíduo / √Σ(log xᵢ − log x̄)²`. Denominador é
+  a alavanca, numerador é o espalhamento. Afastar os x encolhe o erro de `b`.
+- **Recusa explícita**: intervalo que contém os dois candidatos = *indeterminado*.
+  Alavanca menor que ~0,45 década = veredito retido, por mais limpo que seja o
+  ajuste. Fundo alto come a alavanca da curva de transferência.
+- Onde a curva é limpa, a amplitude do modelo b = 1 é o **ganho** em
+  contagens/elétron.
 
 ## 2. Interferência de padrão fixo (`tif-interference`, tecla `[i]`)
 
@@ -101,5 +124,6 @@ só, `alignment_shift`, com teste.
 
 ## Pendências
 
-Calibrar limiares com dado real; STFT do perfil para separar modulação de
-amplitude de velocidade de varredura não uniforme; ler metadados do TIFF.
+Calibrar limiares com dado real, inclusive a regra de 3·SE do ajuste; STFT do
+perfil para separar modulação de amplitude de velocidade de varredura não
+uniforme; ler metadados do TIFF.

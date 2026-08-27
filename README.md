@@ -55,6 +55,7 @@ Tela principal:
   [r] run analysis     [v] view plot
   [e] export CSV       [!] allow duplicates: OFF
   [a] select areas     [i] interference screen
+  [f] fit a power law
   [s] select series
   [q] quit
 ```
@@ -131,6 +132,70 @@ como qualquer outra — a corrida não aborta.
 Seleção exige interface gráfica. Sem ela, `[a]` fica desabilitada com o motivo;
 áreas já gravadas no sidecar continuam funcionando, então dá para rodar e
 exportar por SSH, só não selecionar.
+
+### Ajuste de lei de potência (`[f]`)
+
+Responde: *esta série está limitada por shot noise ou pelo detector?* A física
+dá o modelo — `y = a·xᵇ`, e o expoente é a resposta:
+
+| relação | b se shot | b se detector |
+|---|---|---|
+| variância × média, dentro do ROI de sinal | 1,0 | 0,0 |
+| SNR × potência | 0,5 | 1,0 |
+
+O ajuste é mínimos quadrados em log-log (a lei de potência vira reta), com `b`
+livre **e** os dois modelos de expoente travado para comparação de resíduo.
+
+**O painel que decide não é o do SNR.** O `snr` divide por `noise_std`, medido
+na área de ruído — uma área escolhida justamente por não ter a amostra. Aquele
+sigma não cresce quando a amostra fica mais brilhante, então
+`SNR = S/σ_fundo ∝ P` sai linear por construção. Medido em quadros Poisson
+sintéticos: σ da área de ruído parado em 31 contagens enquanto a potência variava
+16×, e σ dentro da área de sinal indo de 36 a 75.
+
+Quem decide é a **curva de transferência de fótons**: variância × média, ambas
+dentro do ROI de sinal. Poisson diz que *variância = média*, então shot noise dá
+expoente 1 e ruído de leitura dá 0. E não é o mesmo que σ × sinal-acima-do-fundo:
+a área de sinal contém também os fótons do fundo, então `σ = √(fundo + sinal)`
+não é lei de potência no sinal — nos mesmos quadros Poisson essa forma devolveu
+0,27 e veredito *neither*, enquanto a curva de transferência devolveu 0,99.
+
+Três ajustes, e um terceiro veredito de contexto:
+
+```
+  photon transfer curve: signal variance vs signal mean
+    b = +0.992 ± 0.008   (3·SE: [+0.97, +1.02])
+    5 point(s), lever arm 0.65 decades
+      b = 0 locked: residual rms 0.2316
+      b = 1 locked: residual rms 0.0039
+    → shot-noise limited: b ± 3·SE = [0.97, 1.02] contains 1 and excludes ...
+
+  VERDICT: shot-noise limited
+    · the b = 1 model's amplitude is the system gain: 0.986 counts per electron
+```
+
+**Os quatro guardas**, porque com 4 ou 5 pontos um expoente de 0,62 pode ser
+compatível com 0,5 *e* com 1,0 ao mesmo tempo:
+
+- **Erro-padrão do expoente**, `σ_resíduo / √Σ(log xᵢ − log x̄)²`. O denominador é
+  a alavanca — não o espalhamento, que é o numerador. Afastar os pontos em x
+  encolhe o erro do expoente mesmo com dado ruidoso.
+- **A alavanca em décadas.** Potências dentro de um fator de 3 não separam 0,5 de
+  1,0 por mais limpa que esteja a medida, e o laudo diz isso em vez de escolher.
+  Vale para o eixo da curva de transferência também: com fundo de 1000 contagens
+  e sinal de algumas centenas, a média mal se move e não há o que ajustar.
+- **Veredito só com um candidato dentro do intervalo.** Conter os dois é uma
+  resposta de verdade — *indeterminado* —, e conter nenhum também.
+- **Pontos sem logaritmo** (SNR ≤ 0) são descartados **e contados**.
+
+Duas ressalvas viajam com a curva de transferência: o espalhamento dentro da
+área de sinal só é ruído se aquela área for uniforme; e a média é em contagens
+cruas, então um offset eletrônico empurra o expoente para baixo de 1 — separar
+isso exigiria um quadro escuro.
+
+`[l]` alterna log-log, `[v]` desenha os três painéis, `[o]` grava o laudo. A tela
+recalcula do relatório a cada desenho: não existe um quarto estado derivado para
+ficar desatualizado.
 
 ### Dados de exemplo
 
@@ -407,7 +472,10 @@ Para acompanhar progresso, `analysis.run` é um gerador: ele emite um
 | `export.py` | CSV formato longo com o snapshot em linhas `#`. |
 | `config.py` | configuração persistida (último diretório, padrão, métrica, glob, duplicatas). |
 | `state.py` | `AppState` + regra de invalidação. |
+| `fitting.py` | lei de potência em log-log, erro-padrão do expoente, veredito com recusa. |
+| `noise_regime.py` | a física: shot × detector, a curva de transferência e as conferências. |
 | `ui/selection.py` | janela de seleção das áreas (bloqueante, retângulo/elipse). |
+| `ui/fit_screen.py` | tela do ajuste: expoente, veredito de regime, três painéis. |
 | `ui/interference_screen.py` | segunda tela: metadados de aquisição e execução do laudo. |
 | `ui/subtraction_screen.py` | terceira tela: calcula, mostra, grava a subtração e aplica à série. |
 | `interference/` | caracterização de padrão fixo: quadro único, laudo de texto. |
@@ -465,11 +533,16 @@ medida_001_1mW.tif,power,1,std,12.4471
 | key | saídas | precisa de áreas |
 |-----|--------|------------------|
 | `std` | `std` (desvio amostral, ddof=1, imagem inteira) | não |
-| `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std` | sim (`signal`, `noise`) |
+| `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std`, `signal_std` | sim (`signal`, `noise`) |
 
 `snr = (signal_mean − noise_mean) / noise_std`, tudo do mesmo arquivo, em
 contagens brutas; a razão é adimensional. Área de ruído com variância zero vira
 falha daquele arquivo, não `inf`.
+
+`signal_std` é o desvio **dentro** da área de sinal, que a razão não usa. Está
+ali porque é a única saída que carrega a estatística de fótons da própria
+amostra — a área de ruído não tem fóton nenhum dela — e é o que o ajuste `[f]`
+usa para decidir o regime de ruído.
 
 ### Adicionando uma métrica
 
