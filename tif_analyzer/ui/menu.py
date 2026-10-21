@@ -13,6 +13,7 @@ The state machine of §11::
           ├─ [a] → SELECT_AREAS     blocking window; needs a GUI
           ├─ [i] → INTERFERENCE     its own screen, with its own keys
           ├─ [f] → FIT              power-law fit, its own screen
+          ├─ [1] → SINGLE FILE      name one frame; the series keys go quiet
           ├─ [!] → toggle duplicates
           └─ [q] → exit
 """
@@ -86,6 +87,20 @@ class MenuApp:
         if self.state.records is not None and self.discovery_error is None:
             return
         self.discovery_error = None
+
+        if self.state.single_file is not None:
+            # Named outright: no glob to apply, no regex to match, nothing to
+            # collide with. The series settings are left alone so leaving the
+            # mode restores them.
+            try:
+                report = discovery.single_file_report(self.state.single_file)
+            except DiscoveryError as exc:
+                self.discovery_error = exc
+                self.state.update(discovery=None, records=None)
+            else:
+                self.state.update(discovery=report, records=report.records)
+            return
+
         try:
             report = discovery.discover(
                 self.state.directory,
@@ -105,7 +120,13 @@ class MenuApp:
     def blockers(self) -> dict[str, str | None]:
         """Reasons a menu option is unavailable — shown, not hidden."""
         blocked: dict[str, str | None] = {}
-        if isinstance(self.discovery_error, DuplicateParameterError):
+        if self.state.single_file_mode:
+            # The series needs an x axis. One named frame has none, and that is
+            # the whole point of the mode rather than a shortcoming of it.
+            no_axis = "single file mode — no parameter to plot against"
+            for key in ("r", "p", "g", "!"):
+                blocked[key] = no_axis
+        elif isinstance(self.discovery_error, DuplicateParameterError):
             blocked["r"] = "duplicate parameter values — see below"
         elif self.discovery_error is not None:
             blocked["r"] = str(self.discovery_error)
@@ -230,6 +251,8 @@ class MenuApp:
             self.messages.append(f"    saved to {path.name}")
 
     def action_pattern(self) -> None:
+        if self.state.single_file_mode:
+            return
         chosen = prompts.prompt_pattern(self.state.pattern)
         if chosen is None:
             return
@@ -238,6 +261,8 @@ class MenuApp:
         self._persist()
 
     def action_glob(self) -> None:
+        if self.state.single_file_mode:
+            return
         chosen = prompts.prompt_glob(self.state.glob)
         if chosen is None:
             return
@@ -271,6 +296,8 @@ class MenuApp:
         self.state.update(selected_series=chosen)
 
     def action_toggle_duplicates(self) -> None:
+        if self.state.single_file_mode:
+            return
         self.state.update(allow_duplicates=not self.state.allow_duplicates)
         self.discovery_error = None
         self._persist()
@@ -313,6 +340,11 @@ class MenuApp:
         self.interference_screen.run()
 
     def action_run(self) -> None:
+        # A blocked key must not act. In single-file mode the record carries no
+        # parameter, and a series without an x axis would get all the way to
+        # plotting before anything noticed.
+        if self.state.single_file_mode:
+            return
         self.ensure_discovery()
         if self.discovery_error is not None or not self.state.has_records:
             return
@@ -369,7 +401,7 @@ class MenuApp:
             return
         assert self.state.report is not None
         spec = metrics.get(self.state.metric_key)
-        param_name = self.state.records[0].param_name if self.state.records else "parameter"
+        param_name = (self.state.records[0].param_name if self.state.records else None) or "parameter"
         unit = None
         try:
             unit = discovery.infer_unit(self.state.pattern)
@@ -394,7 +426,7 @@ class MenuApp:
         holds no state that could go stale behind the run."""
         if not self.state.has_results:
             return
-        param_name = self.state.records[0].param_name if self.state.records else "parameter"
+        param_name = (self.state.records[0].param_name if self.state.records else None) or "parameter"
         try:
             unit = discovery.infer_unit(self.state.pattern)
         except DiscoveryError:  # pragma: no cover - pattern already validated
@@ -403,6 +435,26 @@ class MenuApp:
         screen.param_label = plotting.axis_label(param_name, unit)
         screen.run()
         self.messages.extend(screen.messages)
+
+    def action_single_file(self) -> None:
+        """Enter single-file mode by naming a frame, or leave it.
+
+        One key, two behaviours, and the label says which one it will do — the
+        menu names the action, not the state. Leaving restores the series
+        settings untouched: they were never cleared, only unused.
+        """
+        if self.state.single_file is not None:
+            self.state.update(single_file=None)
+            self.discovery_error = None
+            self.messages.append("  back to the series")
+            return
+
+        chosen = prompts.prompt_single_file(self.state.directory)
+        if chosen is None:
+            return
+        self.state.update(single_file=chosen)
+        self.discovery_error = None
+        self.messages.append(f"  ✓ single file: {chosen.name}")
 
     def action_export(self) -> None:
         if not self.state.has_results:
@@ -437,6 +489,7 @@ class MenuApp:
             "v": self.action_plot,
             "e": self.action_export,
             "f": self.action_fit,
+            "1": self.action_single_file,
             "!": self.action_toggle_duplicates,
         }
         action = actions.get(key)

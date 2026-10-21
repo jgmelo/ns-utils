@@ -55,7 +55,7 @@ Tela principal:
   [r] run analysis     [v] view plot
   [e] export CSV       [!] allow duplicates: OFF
   [a] select areas     [i] interference screen
-  [f] fit a power law
+  [f] fit a power law  [1] single file
   [s] select series
   [q] quit
 ```
@@ -91,6 +91,44 @@ medida_\d+_(?P<power>[\d.]+)mW\.tiff?$
 O prompt de padrão traz uma tabela de exemplos para editar, e valida na hora:
 não compila → erro; zero grupos nomeados → "não há parâmetro para plotar";
 dois ou mais → "ambíguo, qual é o eixo x?".
+
+### Arquivo único (`[1]`)
+
+O contrato da série — regex com um grupo nomeado cuja captura vira float — está
+certo para um gráfico e errado para abrir **um** quadro e olhar. Um arquivo
+chamado `poliest.tif` não tem número no nome e, até aqui, era inabrível: as
+ferramentas de quadro único leem sua lista da descoberta, que só sabia produzir
+registros com parâmetro.
+
+`[1]` nomeia um arquivo direto. Sem glob, sem regex, sem checagem de duplicata —
+você nomeou o arquivo, não há o que casar nem com o que colidir. O cabeçalho
+troca duas linhas por uma:
+
+```
+  dir:      /dados/ensaio          (1 file)
+  file:     poliest.tif
+```
+
+`pattern:` e `glob:` somem da tela porque não estão governando nada, mas
+continuam no estado: sair do modo devolve a série exatamente como estava.
+
+O registro produzido tem `param_value is None`, e o tipo é opcional de
+propósito — é o que impede um arquivo sem parâmetro de chegar ao pipeline da
+série disfarçado de zero plausível. A corrida continua exigindo o parâmetro;
+ali ele é legítimo, é o eixo x:
+
+```
+[r] run analysis  (single file mode — no parameter to plot against)
+```
+
+O mesmo motivo aparece em `[p]`, `[g]` e `[!]`, e as quatro teclas **também não
+agem** quando pressionadas — rótulo bloqueado sem guarda no dispatch deixaria
+`[r]` ir até a plotagem antes de alguém notar a falta do eixo.
+
+`[a]`, `[i]`, `[s]` e `[f]` passam a funcionar normalmente. O rótulo da tecla
+nomeia a ação, não o estado: `[1] single file` quando fora, `[1] back to the
+series` quando dentro. Não persiste na config — é modo de inspeção, como o corte
+de beads em `[k]`.
 
 ### Seleção de áreas (sinal e ruído)
 

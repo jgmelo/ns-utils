@@ -42,7 +42,9 @@ def header(state: AppState, backend_note: str, notices: list[str]) -> str:
     lines = [f"\n  {TITLE}", ""]
 
     discovery = state.discovery
-    if discovery is None:
+    if state.single_file is not None:
+        counts = "(1 file)" if discovery is not None else "(not found)"
+    elif discovery is None:
         counts = "(not scanned yet)"
     else:
         counts = f"({discovery.n_globbed} files, {discovery.n_parsed} matched)"
@@ -51,8 +53,13 @@ def header(state: AppState, backend_note: str, notices: list[str]) -> str:
             counts += f"  {skipped} skipped"
     room = max(24, term_width() - len(counts) - 14)
     lines.append(f"  dir:      {shorten(str(state.directory), room)}  {counts}")
-    lines.append(f"  pattern:  {state.pattern}")
-    lines.append(f"  glob:     {state.glob}")
+    if state.single_file is not None:
+        # The pattern and the glob are still stored, but nothing is using them:
+        # a line that governs nothing only competes for attention.
+        lines.append(f"  file:     {state.single_file.name}")
+    else:
+        lines.append(f"  pattern:  {state.pattern}")
+        lines.append(f"  glob:     {state.glob}")
 
     spec = metrics.get(state.metric_key)
     lines.append(f"  metric:   {spec.key} — {spec.name}")
@@ -99,12 +106,16 @@ def menu(state: AppState, blockers: dict[str, str | None]) -> str:
         entry("p", "pattern"),
         entry("g", "glob filter"),
         entry("v", "view plot"),
-        (f"[!] allow duplicates: {'ON' if state.allow_duplicates else 'OFF'}", ""),
+        (
+            f"[!] allow duplicates: {'ON' if state.allow_duplicates else 'OFF'}",
+            blockers.get("!") or "",
+        ),
     ]
     left.append(entry("a", "select areas" if state.regions is None else "redraw areas"))
     right.append(entry("i", "interference screen"))
     left.append(entry("f", "fit a power law"))
-    right.append(("", ""))
+    # The label names what the key does, not the state it is in.
+    right.append(entry("1", "back to the series" if state.single_file else "single file"))
     if len(spec.outputs) > 1:
         left.append(entry("s", "select series"))
         right.append(("", ""))

@@ -41,9 +41,17 @@ class NoMatchesError(DiscoveryError):
 @dataclass(frozen=True)
 class FileRecord:
     path: Path
-    param_name: str  # from the regex named group, e.g. "power"
-    param_value: float
+    #: ``None`` in single-file mode: the file was named outright rather than
+    #: matched, so there is no parameter. The optional type is the point — it
+    #: stops a parameterless record from reaching the series pipeline as a
+    #: plausible-looking zero.
+    param_name: str | None  # from the regex named group, e.g. "power"
+    param_value: float | None
     raw_match: str  # the matched substring, for error messages
+
+    @property
+    def has_parameter(self) -> bool:
+        return self.param_value is not None
 
 
 @dataclass(frozen=True)
@@ -227,12 +235,40 @@ def find_duplicates(records: Iterable[FileRecord]) -> dict[float, list[FileRecor
     """
     groups: dict[float, list[FileRecord]] = {}
     for record in records:
+        if record.param_value is None:
+            continue  # parameterless records cannot collide on a value
         groups.setdefault(record.param_value, []).append(record)
     return {
         value: sorted(items, key=lambda r: r.path.name)
         for value, items in sorted(groups.items())
         if len(items) > 1
     }
+
+
+def single_file_report(path: Path) -> DiscoveryReport:
+    """One named file, with no parameter attached.
+
+    The single-frame tools — the interference screen, the subtraction, the area
+    selection — open one frame and never plot it against anything, but they read
+    their file list from discovery, which until now could only produce records
+    that carried a parsed float. A frame whose name holds no number was
+    therefore unopenable, which is the series contract leaking into tools that
+    are not series tools.
+
+    No glob, no regex, no duplicate check: the user named the file, so there is
+    nothing to match and nothing to collide with.
+    """
+    path = Path(path).expanduser()
+    if not path.is_file():
+        raise DiscoveryError(f"not a file: {path}")
+    report = DiscoveryReport(
+        directory=path.parent, glob=path.name, pattern="", param_name=None
+    )
+    report.globbed = [path]
+    report.records = [
+        FileRecord(path=path, param_name=None, param_value=None, raw_match=path.name)
+    ]
+    return report
 
 
 def discover(

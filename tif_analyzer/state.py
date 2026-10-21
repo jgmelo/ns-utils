@@ -28,6 +28,7 @@ INVALIDATING_FIELDS = frozenset(
         "allow_duplicates",
         "page_policy",
         "regions",
+        "single_file",
     }
 )
 
@@ -42,6 +43,10 @@ class AppState:
     allow_duplicates: bool = False
     page_policy: PagePolicy = DEFAULT_PAGE_POLICY
     regions: RegionSet | None = None
+    #: Set to inspect one named frame instead of a series. ``pattern`` and
+    #: ``glob`` are kept untouched while it is on, so leaving the mode restores
+    #: the series exactly as it was.
+    single_file: Path | None = None
     records: list[FileRecord] | None = None
     discovery: DiscoveryReport | None = None
     report: RunReport | None = None
@@ -80,6 +85,10 @@ class AppState:
     @property
     def has_records(self) -> bool:
         return bool(self.records)
+
+    @property
+    def single_file_mode(self) -> bool:
+        return self.single_file is not None
 
     @property
     def has_results(self) -> bool:

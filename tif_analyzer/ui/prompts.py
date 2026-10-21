@@ -191,6 +191,33 @@ class _Cleared:
 CLEARED = _Cleared()
 
 
+def prompt_single_file(directory: Path) -> Path | None:
+    """Ask for one file to inspect. ``None`` cancels.
+
+    A bare filename resolves against *directory*, so the common case is typing
+    the name; an absolute or ``~`` path reaches anywhere. Validated on the spot,
+    because a typo here would otherwise surface as an empty file list two
+    screens later.
+    """
+    print(f"\n  File to inspect   ({CANCEL_HINT}, Tab completes paths)")
+    while True:
+        raw = prompt_line("  file> ", "", _path_completer)
+        if raw is None:
+            return None
+        text = raw.strip()
+        if not text:
+            continue
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(directory) / candidate
+        if candidate.is_file():
+            return candidate
+        if candidate.is_dir():
+            print(f"  ! that is a directory, not a file: {candidate}")
+        else:
+            print(f"  ! no such file: {candidate}")
+
+
 def prompt_export_path(default: Path, title: str = "Export CSV to") -> Path | None:
     print(f"\n  {title}   ({CANCEL_HINT}, Tab completes paths)")
     raw = prompt_line("  file> ", str(default), _path_completer)
@@ -247,7 +274,14 @@ def prompt_reference_file(
         return None
     print(f"\n  {title}   ({CANCEL_HINT})")
     for index, record in enumerate(records[:limit], start=1):
-        print(f"    [{index:>2}] {record.path.name}   ({record.param_name}={record.param_value:g})")
+        # A record from single-file mode carries no parameter, so there is
+        # nothing to print in the parentheses.
+        detail = (
+            f"   ({record.param_name}={record.param_value:g})"
+            if record.param_value is not None
+            else ""
+        )
+        print(f"    [{index:>2}] {record.path.name}{detail}")
     if len(records) > limit:
         print(f"    … and {len(records) - limit} more — type part of a filename to pick one")
 
