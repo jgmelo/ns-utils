@@ -84,10 +84,6 @@ TRANSFER_TARGETS = {
     DETECTOR_VS_MEAN: "detector-noise limited",
 }
 
-#: The metric whose outputs the cross-checks need.
-SNR_METRIC = "snr"
-
-
 @dataclass(frozen=True)
 class Fitted:
     """One fit and its reading, or the reason there is no fit."""

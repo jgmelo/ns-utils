@@ -335,3 +335,22 @@ def test_an_undecided_regime_is_not_narrated_as_a_disagreement():
     assert not any("points the other way" in reason for reason in regime.reasons)
     assert not any("sub-linear response" in reason for reason in regime.reasons)
     assert any("snr vs power (mW): b =" in reason for reason in regime.reasons)
+
+
+def test_the_signal_referenced_ratio_bends_on_a_pedestal():
+    """``snr_signal`` divides by sigma measured where the sample is, so its
+    exponent is a real noise statement — but 0,5 is an *asymptote*, reached only
+    when the sample far outshines the background. With 1000 counts underneath, a
+    genuinely Poisson series reads 0,73 and the verdict is "neither". The
+    transfer curve, on the same data, is unaffected."""
+    values = {}
+    for power in POWERS:
+        signal = 60.0 * power
+        sigma = shot(signal)  # √(fundo + sinal)
+        values[power] = measurement(signal, sigma) | {"snr": signal / sigma}
+    regime = noise_regime.analyse(report_from(values), "snr", "power (mW)")
+
+    assert regime.snr.fit.exponent == pytest.approx(0.73, abs=0.01)
+    assert regime.snr.verdict.conclusion == "neither"
+    assert regime.noise.fit.exponent == pytest.approx(1.0, abs=1e-9)
+    assert regime.conclusion == "shot-noise limited"

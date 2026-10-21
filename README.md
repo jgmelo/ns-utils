@@ -610,6 +610,7 @@ medida_001_1mW.tif,power,1,std,12.4471
 |-----|--------|------------------|
 | `std` | `std` (desvio amostral, ddof=1, imagem inteira) | não |
 | `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std`, `signal_std` | sim (`signal`, `noise`) |
+| `snr_signal` | `snr_signal` + as mesmas quatro | sim (`signal`, `noise`) |
 
 `snr = (signal_mean − noise_mean) / noise_std`, tudo do mesmo arquivo, em
 contagens brutas; a razão é adimensional. Área de ruído com variância zero vira
@@ -619,6 +620,20 @@ falha daquele arquivo, não `inf`.
 ali porque é a única saída que carrega a estatística de fótons da própria
 amostra — a área de ruído não tem fóton nenhum dela — e é o que o ajuste `[f]`
 usa para decidir o regime de ruído.
+
+`snr_signal = (signal_mean − noise_mean) / signal_std` é a mesma medida com o
+outro denominador. Enquanto `snr` pergunta *o quanto a amostra se destaca do
+fundo* — detectabilidade —, esta pergunta *com que precisão o brilho dela é
+conhecido*. Duas ressalvas, as duas importantes:
+
+- **Só vale com área de sinal uniforme.** Numa bolinha, `signal_std` é dominado
+  por estrutura espacial, não por ruído, e a razão cairia justamente quando a
+  ótica melhorasse a ponto de resolver a borda.
+- **Os expoentes 0,5 e 1,0 são assíntotas.** Com pedestal de fundo,
+  `σ = √(fundo + sinal)`, e o expoente fica entre os dois: medi 0,73 numa série
+  Poisson genuína sobre 1000 contagens, com veredito *neither*. A curva de
+  transferência de fótons não tem esse problema, porque os fótons do fundo
+  entram também na média.
 
 ### Adicionando uma métrica
 

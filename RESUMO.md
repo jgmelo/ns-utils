@@ -1,6 +1,6 @@
 # Resumo — ns-utils
 
-Duas ferramentas, um pacote Python 3.10+, 449 testes.
+Duas ferramentas, um pacote Python 3.10+, 456 testes.
 
 ## 1. TIF Series Analyzer (`tif-analyzer`)
 
@@ -12,10 +12,13 @@ métrica × parâmetro.
 |---|---|---|
 | `std` | desvio amostral (ddof=1) da imagem inteira | não |
 | `snr` | `snr`, `signal_mean`, `noise_mean`, `noise_std`, `signal_std` | sim |
+| `snr_signal` | mesma razão, dividida por `signal_std` | sim |
 
 `snr = (signal_mean − noise_mean) / noise_std`, em contagens brutas.
-`signal_std` não entra na razão: é o desvio *dentro* da área de sinal, única
-saída que carrega a estatística de fótons da amostra.
+`signal_std` não entra na razão de `snr`: é o desvio *dentro* da área de sinal,
+única saída que carrega a estatística de fótons da amostra. `snr_signal` divide
+por ele — exige área uniforme, e seus expoentes 0,5/1,0 são assíntotas: com
+pedestal de fundo o valor fica entre os dois (0,73 medido sobre 1000 contagens).
 
 `[a]` seleciona duas áreas (retângulo/elipse) numa imagem de referência,
 aplicadas a toda a série; ficam em `.tif-analyzer-rois.json` no diretório dos

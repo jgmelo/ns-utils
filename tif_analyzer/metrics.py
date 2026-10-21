@@ -232,3 +232,55 @@ def _snr(image: np.ndarray, regions: Mapping[str, np.ndarray]) -> dict[str, floa
         "noise_std": noise_std,
         "signal_std": float(np.std(signal, ddof=1)),
     }
+
+
+@register(
+    key="snr_signal",
+    name="Signal-to-noise ratio, signal-referenced",
+    description=(
+        "From the same two areas, but divided by the spread *inside* the signal "
+        "area: snr_signal = (signal_mean - noise_mean) / signal_std. Where snr "
+        "asks how far the sample stands out from the background, this asks how "
+        "precisely the sample's own brightness is known. Two caveats: it is "
+        "valid only where the signal area is uniform, since spread across real "
+        "structure is not noise; and its 0.5 / 1.0 exponents against the "
+        "parameter are asymptotes, reached only when the sample far outshines "
+        "the background. With a pedestal, sigma is sqrt(background + signal) and "
+        "the exponent lands between the two — 0.73 for a Poisson series sitting "
+        "on 1000 counts. The photon transfer curve has no such problem."
+    ),
+    outputs=(
+        OutputSpec("snr_signal", "Signal-to-noise ratio (signal-referenced)", None),
+        OutputSpec("signal_mean", "Signal mean", "counts"),
+        OutputSpec("noise_mean", "Noise mean", "counts"),
+        OutputSpec("signal_std", "Signal-area standard deviation", "counts"),
+        OutputSpec("noise_std", "Noise standard deviation", "counts"),
+    ),
+    requires_regions=(SIGNAL, NOISE),
+)
+def _snr_signal(image: np.ndarray, regions: Mapping[str, np.ndarray]) -> dict[str, float]:
+    signal = regions[SIGNAL]
+    noise = regions[NOISE]
+    if signal.size < 2:
+        raise ValueError(
+            f"signal area needs at least 2 pixels for ddof=1, it has {signal.size}"
+        )
+    if noise.size < 2:
+        raise ValueError(
+            f"noise area needs at least 2 pixels for ddof=1, it has {noise.size}"
+        )
+    signal_std = float(np.std(signal, ddof=1))
+    if signal_std == 0.0:
+        raise ValueError(
+            "signal area has zero variance — every pixel is identical, so the ratio "
+            "is undefined; pick an area with actual noise in it"
+        )
+    signal_mean = float(np.mean(signal))
+    noise_mean = float(np.mean(noise))
+    return {
+        "snr_signal": (signal_mean - noise_mean) / signal_std,
+        "signal_mean": signal_mean,
+        "noise_mean": noise_mean,
+        "signal_std": signal_std,
+        "noise_std": float(np.std(noise, ddof=1)),
+    }

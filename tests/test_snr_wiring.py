@@ -298,3 +298,86 @@ def test_clear_removes_the_sidecar(tmp_path):
     assert roi_sidecar.clear(tmp_path) is True
     assert roi_sidecar.clear(tmp_path) is False
     assert roi_sidecar.load(tmp_path).regions is None
+
+
+# -- snr_signal: the same areas, the other denominator ----------------------- #
+
+
+def test_snr_signal_declares_its_regions_and_outputs_statically():
+    spec = metrics.get("snr_signal")
+    assert spec.requires_regions == ("signal", "noise")
+    assert spec.output_keys == (
+        "snr_signal",
+        "signal_mean",
+        "noise_mean",
+        "signal_std",
+        "noise_std",
+    )
+    assert spec.default_series == "snr_signal"
+
+
+def test_snr_signal_divides_by_the_spread_inside_the_signal_area():
+    signal = np.arange(16, dtype=np.float64) + 1000.0
+    noise = np.arange(36, dtype=np.float64)
+    values = compute_validated(
+        metrics.get("snr_signal"), np.zeros((2, 2)), {"signal": signal, "noise": noise}
+    )
+    expected = (float(np.mean(signal)) - float(np.mean(noise))) / float(
+        np.std(signal, ddof=1)
+    )
+    assert values["snr_signal"] == pytest.approx(expected)
+
+
+def test_the_two_ratios_differ_on_the_same_areas():
+    """Same numerator, different denominator — the point of having both."""
+    rng = np.random.default_rng(0)
+    signal = rng.normal(1000.0, 40.0, size=400)
+    noise = rng.normal(100.0, 10.0, size=400)
+    areas = {"signal": signal, "noise": noise}
+    a = compute_validated(metrics.get("snr"), np.zeros((2, 2)), areas)
+    b = compute_validated(metrics.get("snr_signal"), np.zeros((2, 2)), areas)
+    assert a["signal_mean"] == b["signal_mean"]
+    assert a["noise_mean"] == b["noise_mean"]
+    assert a["snr"] != pytest.approx(b["snr_signal"])
+    # The noise area is the quieter one here, so it gives the larger ratio.
+    assert a["snr"] > b["snr_signal"]
+
+
+def test_a_flat_signal_area_is_a_per_file_error_not_infinity():
+    with pytest.raises(ValueError, match="signal area has zero variance"):
+        compute_validated(
+            metrics.get("snr_signal"),
+            np.zeros((2, 2)),
+            {"signal": np.full(16, 500.0), "noise": np.arange(36, dtype=np.float64)},
+        )
+
+
+def test_snr_signal_runs_over_a_series_like_any_other_metric(tmp_path):
+    """Needs its own data: the shared fixture's signal area is a flat plateau,
+    which ``snr`` tolerates and this metric cannot divide by."""
+    directory = tmp_path / "data"
+    directory.mkdir()
+    rng = np.random.default_rng(0)
+    for index, power in enumerate([1, 2, 4], start=1):
+        image = rng.integers(90, 111, size=(20, 30)).astype(np.uint16)
+        image[2:6, 2:6] += 1000 * power
+        tifffile.imwrite(directory / f"medida_{index:03d}_{power}mW.tif", image)
+
+    report = analysis.run_blocking(
+        records_of(directory), metrics.get("snr_signal"), regions=region_set()
+    )
+    assert report.n_results == 3
+    assert report.n_failures == 0
+    assert all("snr_signal" in r.values for r in report.results)
+
+
+def test_a_flat_plateau_is_measurable_by_snr_and_not_by_snr_signal(snr_dir):
+    """The two metrics refuse different data, and each refusal is correct."""
+    records = records_of(snr_dir)
+    ok = analysis.run_blocking(records, metrics.get("snr"), regions=region_set())
+    refused = analysis.run_blocking(
+        records, metrics.get("snr_signal"), regions=region_set()
+    )
+    assert ok.n_failures == 0
+    assert refused.n_results == 0
+    assert "signal area has zero variance" in str(refused.failures[0][1])
