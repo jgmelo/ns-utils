@@ -37,6 +37,57 @@ def shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else "…" + text[-(limit - 1) :]
 
 
+def measured_values(state: AppState) -> str | None:
+    """The one frame's metric outputs, on one line. ``None`` if not measured.
+
+    Every output the metric declares, not just the selected series: with a
+    single frame there is no plot to choose a series for, and the numbers the
+    ratio was built from are exactly what you want to see next to it.
+    """
+    report = state.report
+    if report is None or not report.results:
+        return None
+    spec = metrics.get(state.metric_key)
+    values = report.results[0].values
+    parts = []
+    for output in spec.outputs:
+        if output.key not in values:
+            continue
+        unit = f" {output.unit}" if output.unit else ""
+        parts.append(f"{output.key} {values[output.key]:.6g}{unit}")
+    return "   ".join(parts) if parts else None
+
+
+def measurement_report(report: RunReport, spec, path: Path | None) -> str:
+    """Full-screen readout for a single-frame measurement."""
+    lines = ["", f"  {spec.key} — {spec.name}", ""]
+    if path is not None:
+        lines.append(f"  file:   {path.name}")
+    if report.failures:
+        failed, error = report.failures[0]
+        lines.append(f"  ✗ {failed.name}: {type(error).__name__}: {error}")
+        return "\n".join(lines)
+    if not report.results:
+        lines.append("  ✗ nothing was measured")
+        return "\n".join(lines)
+
+    result = report.results[0]
+    width = max(len(output.label) for output in spec.outputs) + 2
+    lines.append("")
+    for output in spec.outputs:
+        if output.key not in result.values:
+            continue
+        unit = f" {output.unit}" if output.unit else ""
+        lines.append(
+            f"  {output.label + ':':<{width}} {result.values[output.key]:>14.6g}{unit}"
+        )
+    lines.append("")
+    source = "from cache" if result.from_cache else f"{result.duration_s * 1000:.0f} ms"
+    areas = report.config_snapshot.get("regions")
+    lines.append(f"  ({source}" + (f", areas: {areas}" if areas else "") + ")")
+    return "\n".join(lines)
+
+
 def header(state: AppState, backend_note: str, notices: list[str]) -> str:
     """Renders from ``AppState``, so the user always sees where they are."""
     lines = [f"\n  {TITLE}", ""]
@@ -73,7 +124,10 @@ def header(state: AppState, backend_note: str, notices: list[str]) -> str:
         lines.append("  areas:    none selected — press [a]")
 
     report = state.report
-    if report is None:
+    if state.single_file is not None:
+        measured = measured_values(state)
+        lines.append(f"  measured: {measured}" if measured else "  measured: — press [r]")
+    elif report is None:
         lines.append("  results:  —")
     else:
         failures = f"   ({report.n_failures} failures)" if report.n_failures else ""
@@ -99,7 +153,7 @@ def menu(state: AppState, blockers: dict[str, str | None]) -> str:
     left = [
         entry("d", "directory"),
         entry("m", "metric"),
-        entry("r", "run analysis"),
+        entry("r", "measure this frame" if state.single_file else "run analysis"),
         entry("e", "export CSV"),
     ]
     right = [

@@ -113,14 +113,19 @@ def test_the_header_swaps_pattern_and_glob_for_the_filename(unnamed_file, capsys
     assert "(1 file)" in text
 
 
-def test_the_series_keys_say_why_they_are_off(unnamed_file, capsys):
+def test_the_series_shaped_keys_say_why_they_are_off(unnamed_file, capsys):
+    """Only the outputs that need an x axis go quiet. The metric still has a
+    number to give, so [r] stays available and renames itself."""
     app = make_app(unnamed_file.parent, "q")
     app.state.update(single_file=unnamed_file)
     app.loop()
     text = capsys.readouterr().out
-    assert "[r] run analysis  (single file mode — no parameter to plot against)" in text
-    for key in ("[p] pattern", "[g] glob filter"):
-        assert key in text
+    reason = "single file mode — one point is not a series"
+    for label in ("[p] pattern", "[g] glob filter", "[v] view plot",
+                  "[e] export CSV", "[f] fit a power law"):
+        assert f"{label}  ({reason})" in text
+    assert "[r] measure this frame" in text
+    assert f"[r] measure this frame  ({reason})" not in text
 
 
 def test_the_key_label_names_the_action_not_the_state(series_dir, unnamed_file, capsys):
@@ -197,13 +202,77 @@ def prompts_module():
 # --------------------------------------------------------------------------- #
 
 
-def test_the_run_key_does_nothing_in_the_mode(unnamed_file):
-    """Labelled as blocked is not enough: a series with no x axis would get all
-    the way to plotting before anything noticed."""
-    app = make_app(unnamed_file.parent, ["r", "q"])
+def test_the_run_key_measures_the_frame(unnamed_file):
+    app = make_app(unnamed_file.parent, ["r", "", "q"])
     app.state.update(single_file=unnamed_file)
     app.loop()
+    assert app.state.report is not None
+    assert len(app.state.report.results) == 1
+    assert "std" in app.state.report.results[0].values
+
+
+def test_the_measurement_is_shown_in_full_and_in_the_header(unnamed_file, capsys):
+    app = make_app(unnamed_file.parent, ["r", "", "q"])
+    app.state.update(single_file=unnamed_file)
+    app.loop()
+    text = capsys.readouterr().out
+    assert "Standard deviation:" in text          # the readout
+    assert "measured: std " in text               # the header line afterwards
+
+
+def test_the_header_says_to_press_r_before_measuring(unnamed_file, capsys):
+    app = make_app(unnamed_file.parent, "q")
+    app.state.update(single_file=unnamed_file)
+    app.loop()
+    assert "measured: — press [r]" in capsys.readouterr().out
+
+
+def test_every_output_is_shown_not_just_the_selected_series(series_dir, make_tif):
+    """With no plot to pick a series for, the numbers the ratio was built from
+    are exactly what you want next to it."""
+    import numpy as np
+
+    from tif_analyzer.regions import Rect, RegionSet
+
+    rng = np.random.default_rng(0)
+    values = rng.integers(90, 111, size=(20, 20)).astype(np.uint16)
+    values[2:8, 2:8] += 800
+    path = make_tif(series_dir, "poliest.tif", values)
+
+    app = make_app(series_dir, ["r", "", "q"])
+    app.state.update(
+        metric_key="snr",
+        single_file=path,
+        regions=RegionSet(
+            signal=Rect(2, 2, 6, 6),
+            noise=Rect(10, 10, 8, 8),
+            image_shape=(20, 20),
+        ),
+    )
+    app.loop()
+    measured = app.state.report.results[0].values
+    assert set(measured) == {"snr", "signal_mean", "noise_mean", "noise_std", "signal_std"}
+
+
+def test_measuring_is_blocked_until_the_areas_exist(series_dir, make_tif, capsys):
+    import numpy as np
+
+    path = make_tif(series_dir, "poliest.tif", np.full((20, 20), 100, dtype=np.uint16))
+    app = make_app(series_dir, ["r", "q"])
+    app.state.update(metric_key="snr", single_file=path)
+    app.loop()
     assert app.state.report is None
+    assert "[r] measure this frame  (metric snr needs the areas — press [a])" in capsys.readouterr().out
+
+
+def test_a_failing_frame_is_reported_not_crashed(series_dir, tmp_path, capsys):
+    broken = series_dir / "poliest.tif"
+    broken.write_bytes(b"not a tiff")
+    app = make_app(series_dir, ["r", "", "q"])
+    app.state.update(single_file=broken)
+    app.loop()
+    text = capsys.readouterr().out
+    assert "✗ poliest.tif" in text
 
 
 def test_the_pattern_and_glob_keys_do_nothing_in_the_mode(

@@ -1,6 +1,6 @@
 # Resumo — ns-utils
 
-Duas ferramentas, um pacote Python 3.10+, 444 testes.
+Duas ferramentas, um pacote Python 3.10+, 449 testes.
 
 ## 1. TIF Series Analyzer (`tif-analyzer`)
 
@@ -34,9 +34,11 @@ dados e são conferidas contra a dimensão real das imagens.
 - Falha por arquivo é coletada, não aborta a corrida.
 - **`[1]` arquivo único**: nomeia um quadro direto, sem glob, regex nem
   duplicata. `param_value` é `None` — o tipo opcional é que impede um arquivo
-  sem parâmetro de entrar na série disfarçado de zero. A corrida e `[p]`/`[g]`/`[!]`
-  ficam bloqueados **e inertes**; `[a]`, `[i]`, `[s]` e `[f]` funcionam. O
-  `pattern` e o `glob` sobrevivem ao modo, só saem da tela.
+  sem parâmetro de entrar na série disfarçado de zero. `[r]` vira *measure this
+  frame*: mesma corrida e mesma cache, laudo com todas as saídas da métrica em
+  vez de gráfico. Só o que precisa de eixo x sai de cena — `[v]`, `[e]`, `[f]`,
+  `[p]`, `[g]`, `[!]` — bloqueados **e inertes**. O `pattern` e o `glob`
+  sobrevivem ao modo, só saem da tela.
 
 ### Ajuste (`[f]`)
 

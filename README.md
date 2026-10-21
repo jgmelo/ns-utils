@@ -114,21 +114,42 @@ continuam no estado: sair do modo devolve a série exatamente como estava.
 
 O registro produzido tem `param_value is None`, e o tipo é opcional de
 propósito — é o que impede um arquivo sem parâmetro de chegar ao pipeline da
-série disfarçado de zero plausível. A corrida continua exigindo o parâmetro;
-ali ele é legítimo, é o eixo x:
+série disfarçado de zero plausível.
+
+**A métrica continua rodando.** `[r]` vira `measure this frame` e devolve um
+laudo em vez de um gráfico, com **todas** as saídas da métrica — sem plotagem,
+não há série a escolher, e os números de que a razão foi feita são justamente o
+que se quer ver ao lado dela:
 
 ```
-[r] run analysis  (single file mode — no parameter to plot against)
+  snr — Signal-to-noise ratio
+
+  file:   poliest.tif
+
+  Signal-to-noise ratio:                  78.9944
+  Signal mean:                            3499.69 counts
+  Noise mean:                              999.523 counts
+  Noise standard deviation:                31.6499 counts
+  Signal-area standard deviation:          59.5437 counts
 ```
 
-O mesmo motivo aparece em `[p]`, `[g]` e `[!]`, e as quatro teclas **também não
-agem** quando pressionadas — rótulo bloqueado sem guarda no dispatch deixaria
-`[r]` ir até a plotagem antes de alguém notar a falta do eixo.
+Depois disso o cabeçalho carrega a linha resumida:
 
-`[a]`, `[i]`, `[s]` e `[f]` passam a funcionar normalmente. O rótulo da tecla
-nomeia a ação, não o estado: `[1] single file` quando fora, `[1] back to the
-series` quando dentro. Não persiste na config — é modo de inspeção, como o corte
-de beads em `[k]`.
+```
+  measured: snr 78.9944   signal_mean 3499.69 counts   noise_mean 999.523 counts   …
+```
+
+Mesma corrida, mesma cache, mesmo tratamento de falha por arquivo — só a saída
+difere. A métrica `snr` continua exigindo as áreas.
+
+**O que fica de fora é só o que precisa de eixo x**: `[v]`, `[e]`, `[f]`, mais
+`[p]`, `[g]` e `[!]`. As seis teclas mostram o motivo **e não agem** quando
+pressionadas — rótulo bloqueado sem guarda no dispatch deixaria o gráfico ir
+até a rotulagem do eixo antes de alguém notar a falta do parâmetro.
+
+`[a]`, `[i]` e `[s]` funcionam normalmente. O rótulo da tecla nomeia a ação, não
+o estado: `[1] single file` quando fora, `[1] back to the series` quando dentro.
+Não persiste na config — é modo de inspeção, como o corte de beads em `[k]`.
 
 ### Seleção de áreas (sinal e ruído)
 

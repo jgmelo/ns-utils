@@ -121,11 +121,17 @@ class MenuApp:
         """Reasons a menu option is unavailable — shown, not hidden."""
         blocked: dict[str, str | None] = {}
         if self.state.single_file_mode:
-            # The series needs an x axis. One named frame has none, and that is
-            # the whole point of the mode rather than a shortcoming of it.
-            no_axis = "single file mode — no parameter to plot against"
-            for key in ("r", "p", "g", "!"):
+            # The series needs an x axis. One named frame has none — but the
+            # metric still has a number to give, so [r] measures instead of
+            # running, and only the series-shaped outputs go quiet.
+            no_axis = "single file mode — one point is not a series"
+            for key in ("p", "g", "!", "v", "e", "f"):
                 blocked[key] = no_axis
+            spec = metrics.get(self.state.metric_key)
+            if spec.needs_regions and self.state.regions is None:
+                blocked["r"] = f"metric {spec.key} needs the areas — press [a]"
+            elif not self.state.has_records:
+                blocked["r"] = str(self.discovery_error or "no file")
         elif isinstance(self.discovery_error, DuplicateParameterError):
             blocked["r"] = "duplicate parameter values — see below"
         elif self.discovery_error is not None:
@@ -145,11 +151,11 @@ class MenuApp:
             blocked["a"] = "no matching files to open"
 
         if not self.state.has_results:
-            blocked["v"] = "no results — run the analysis first"
-            blocked["e"] = "no results — run the analysis first"
-            blocked["f"] = "no results — run the analysis first"
+            for key in ("v", "e", "f"):
+                blocked.setdefault(key, "no results — run the analysis first")
         elif not self.backend.interactive:
-            blocked["v"] = f"{self.backend.name} backend — saves a PNG"
+            # setdefault: a reason already set above is the more specific one.
+            blocked.setdefault("v", f"{self.backend.name} backend — saves a PNG")
         return blocked
 
     # -- screen ------------------------------------------------------------- #
@@ -340,10 +346,8 @@ class MenuApp:
         self.interference_screen.run()
 
     def action_run(self) -> None:
-        # A blocked key must not act. In single-file mode the record carries no
-        # parameter, and a series without an x axis would get all the way to
-        # plotting before anything noticed.
         if self.state.single_file_mode:
+            self.action_measure()
             return
         self.ensure_discovery()
         if self.discovery_error is not None or not self.state.has_records:
@@ -396,8 +400,51 @@ class MenuApp:
             print(render.failure_report(report))
         render.pause(self.reader.read)
 
+    def action_measure(self) -> None:
+        """Compute the metric for the one named frame.
+
+        Same pipeline, same cache, same per-file failure handling as the series
+        run — only the output differs: a readout instead of a plot, because one
+        point is a number and not a curve.
+        """
+        self.ensure_discovery()
+        if self.discovery_error is not None or not self.state.has_records:
+            return
+        spec = metrics.get(self.state.metric_key)
+        if spec.needs_regions and self.state.regions is None:
+            return
+
+        render.clear_screen(self.clear)
+        snapshot = analysis.make_snapshot(
+            directory=self.state.directory,
+            glob=self.state.single_file.name if self.state.single_file else "",
+            pattern="",
+            metric_key=spec.key,
+            steps=self.state.preprocess_steps,
+            page_policy=self.state.page_policy,
+            allow_duplicates=self.state.allow_duplicates,
+            n_files=1,
+            regions=self.state.regions if spec.needs_regions else None,
+        )
+        report = analysis.run_blocking(
+            self.state.records or [],
+            spec,
+            steps=self.state.preprocess_steps,
+            cache=self.cache,
+            page_policy=self.state.page_policy,
+            snapshot=snapshot,
+            regions=self.state.regions,
+        )
+        self.state.update(
+            report=report, selected_series=self.state.selected_series or spec.default_series
+        )
+        print(render.measurement_report(report, spec, self.state.single_file))
+        render.pause(self.reader.read)
+
     def action_plot(self) -> None:
-        if not self.state.has_results:
+        # One point is not a curve. Blocked keys must not act: the plot would
+        # label its x axis with a parameter that does not exist.
+        if self.state.single_file_mode or not self.state.has_results:
             return
         assert self.state.report is not None
         spec = metrics.get(self.state.metric_key)
@@ -424,7 +471,7 @@ class MenuApp:
     def action_fit(self) -> None:
         """Open the fit screen. It recomputes from the report every draw, so it
         holds no state that could go stale behind the run."""
-        if not self.state.has_results:
+        if self.state.single_file_mode or not self.state.has_results:
             return
         param_name = (self.state.records[0].param_name if self.state.records else None) or "parameter"
         try:
@@ -457,7 +504,7 @@ class MenuApp:
         self.messages.append(f"  ✓ single file: {chosen.name}")
 
     def action_export(self) -> None:
-        if not self.state.has_results:
+        if self.state.single_file_mode or not self.state.has_results:
             return
         assert self.state.report is not None
         default = self.state.directory / f"{self.state.directory.name}_{self.state.metric_key}.csv"
